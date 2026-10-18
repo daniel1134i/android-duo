@@ -1,0 +1,27 @@
+{
+  "name": "Android Duo Display",
+  "short_name": "Android Duo",
+  "description": "macOS Second Display & Touchscreen Companion",
+  "start_url": "/?pwa=1",
+  "scope": "/",
+  "id": "/?pwa=1",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "window-controls-overlay"],
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#000000">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <meta name="apple-mobile-web-app-title" content="Android Duo">
+  <title>Android Duo - macOS Touch Display</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Main Display Canvas -->
+  <div id="canvas-container">
+    <canvas id="screen-canvas"></canvas>
+    <!-- Visual Touch Ripple & Long-press feedback -->
+    <div id="touch-indicator" class="touch-indicator"></div>
+    <div id="longpress-indicator" class="longpress-indicator"></div>
+  </div>
+
+  <!-- Hidden input for summoning Android soft keyboard -->
+  <input 
+    type="text" 
+    id="hidden-keyboard-input" 
+    autocomplete="off" 
+    autocorrect="off" 
+    autocapitalize="off" 
+    spellcheck="false" 
+    inputmode="text" 
+    tabindex="-1"
+    aria-hidden="true"
+  />
+
+  <!-- Floating Control Bar -->
+  <div id="floating-toolbar" class="toolbar-collapsed">
+    <!-- Collapsed Pill (Mini Status + Toggle) -->
+    <div id="toolbar-pill" class="toolbar-pill" title="Tap to expand controls">
+      <div class="pill-status-dot" id="pill-status-dot"></div>
+      <span class="pill-text" id="pill-transport">⚡ USB</span>
+      <span class="pill-divider">·</span>
+      <span class="pill-text" id="pill-fps">-- FPS</span>
+      <span class="pill-divider">·</span>
+      <span class="pill-text" id="pill-ping">-- ms</span>
+      <span class="pill-divider">·</span>
+      <button class="pill-touch-btn" id="btn-pill-fullscreen" title="Развернуть на весь экран">
+        <span class="pill-touch-icon">⛶</span>
+        <span class="pill-touch-label">FULLSCREEN</span>
+      </button>
+      <button class="pill-action-chip hidden" id="pill-pwa-chip" title="Установить как приложение на планшет">📲 Установить</button>
+      <button class="pill-expand-btn" id="btn-expand-toolbar" aria-label="Expand toolbar">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Expanded Control Panel -->
+    <div id="toolbar-panel" class="toolbar-panel">
+      <!-- Panel Header -->
+      <div class="panel-header">
+        <div class="header-status">
+          <span class="status-indicator" id="status-indicator"></span>
+          <span class="status-label" id="status-label">Connecting...</span>
+        </div>
+        <div class="header-metrics">
+          <div class="metric-item">
+            <span class="metric-value" id="val-fps">0</span>
+            <span class="metric-unit">FPS</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-value" id="val-ping">0</span>
+            <span class="metric-unit">ms</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-value" id="val-resolution">0x0</span>
+            <span class="metric-unit">RES</span>
+          </div>
+        </div>
+        <button class="panel-close-btn" id="btn-collapse-toolbar" aria-label="Collapse toolbar">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Section: Input Mode Switch -->
+      <div class="panel-row">
+        <div class="row-label">СЕНСОРНЫЙ ВВОД</div>
+        <div class="segmented-control" id="mode-selector">
+          <button class="segment-btn" data-mode="direct">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 14a4 4 0 1 1 4-4 4 4 0 0 1-4 4z"/>
+            </svg>
+            Прямой тач
+          </button>
+          <button class="segment-btn" data-mode="trackpad">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+            </svg>
+            Трекпад
+          </button>
+          <button class="segment-btn active" data-mode="off">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Отключен (Только монитор)
+          </button>
+        </div>
+      </div>
+
+      <!-- Section: Display Brightness Sync -->
+      <div class="panel-row">
+        <div class="row-label row-between">
+          <span>ЯРКОСТЬ ЭКРАНА (СИНХРОНИЗАЦИЯ С MAC)</span>
+          <span class="value-badge" id="val-brightness">50%</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-icon">🔅</span>
+          <input type="range" id="slider-brightness" min="5" max="100" value="50" class="custom-slider" title="Синхронизация яркости с экраном Mac" />
+          <span class="slider-icon">🔆</span>
+        </div>
+      </div>
+
+      <!-- Section: Stream & Display Settings -->
+      <div class="panel-row multi-group">
+        <div class="setting-group">
+          <div class="row-label">КАЧЕСТВО</div>
+          <div class="segmented-control compact" id="quality-selector">
+            <button class="segment-btn" data-quality="low">Низкое</button>
+            <button class="segment-btn" data-quality="med">Среднее</button>
+            <button class="segment-btn active" data-quality="high">Высокое</button>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <div class="row-label">ЧАСТОТА КАДРОВ</div>
+          <div class="segmented-control compact" id="fps-selector">
+            <button class="segment-btn" data-fps="30">30</button>
+            <button class="segment-btn" data-fps="60">60</button>
+            <button class="segment-btn active" data-fps="90">⚡ 90 Hz</button>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <div class="row-label">МАСШТАБ КАРТИНКИ</div>
+          <div class="segmented-control compact" id="scale-selector">
+            <button class="segment-btn active" data-scale="fill">Fill (Без полей)</button>
+            <button class="segment-btn" data-scale="fit">Letterbox (С полями)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section: UI Scale / Resolution -->
+      <div class="panel-row">
+        <div class="row-label">МАСШТАБ ИНТЕРФЕЙСА</div>
+        <div class="segmented-control" id="ui-scale-selector">
+          <button class="segment-btn active" data-res="1280x800">Крупный (1280×800)</button>
+          <button class="segment-btn" data-res="1440x900">Стандартный (1440×900)</button>
+          <button class="segment-btn" data-res="1600x1000">Компактный (1600×1000)</button>
+          <button class="segment-btn" data-res="1920x1200">100% Нативный (1920×1200)</button>
+        </div>
+      </div>
+
+      <!-- Section: Display Selector -->
+      <div class="panel-row" id="display-row">
+        <div class="row-label">МОНИТОР</div>
+        <div class="display-select-wrapper">
+          <select id="display-select" class="custom-select">
+            <option value="0">Дисплей 1 (Основной экран Mac)</option>
+            <option value="1">Дисплей 2 (Второй экран планшета)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Section: Sticky Modifiers -->
+      <div class="panel-row">
+        <div class="row-label">МОДИФИКАТОРЫ</div>
+        <div class="modifiers-bar">
+          <button class="mod-btn" id="mod-cmd" data-mod="cmd">
+            <span class="mod-glyph">⌘</span> Cmd
+          </button>
+          <button class="mod-btn" id="mod-opt" data-mod="opt">
+            <span class="mod-glyph">⌥</span> Opt
+          </button>
+          <button class="mod-btn" id="mod-ctrl" data-mod="ctrl">
+            <span class="mod-glyph">⌃</span> Ctrl
+          </button>
+          <button class="mod-btn" id="mod-shift" data-mod="shift">
+            <span class="mod-glyph">⇧</span> Shift
+          </button>
+        </div>
+      </div>
+
+      <!-- Section: Quick Utility Keys & macOS Shortcuts -->
+      <div class="panel-row">
+        <div class="row-label">БЫСТРЫЕ КЛАВИШИ</div>
+        <div class="quick-keys-grid">
+          <button class="key-btn" data-key="Escape" data-code="Escape" data-mac-keycode="53">Esc</button>
+          <button class="key-btn" data-key="Tab" data-code="Tab" data-mac-keycode="48">Tab</button>
+          <button class="key-btn" data-key=" " data-code="Space" data-mac-keycode="49">Space</button>
+          <button class="key-btn" data-key="Backspace" data-code="Backspace" data-mac-keycode="51">⌫ Del</button>
+          <button class="key-btn key-accent" data-key="Enter" data-code="Enter" data-mac-keycode="36">↵ Enter</button>
+          <button class="key-btn" data-shortcut="cmd+c">⌘C Copy</button>
+          <button class="key-btn" data-shortcut="cmd+v">⌘V Paste</button>
+          <button class="key-btn" data-shortcut="cmd+z">⌘Z Undo</button>
+          <button class="key-btn" data-shortcut="mission_control">⌃↑ Mission</button>
+          <button class="key-btn" data-shortcut="show_desktop">F11 Desktop</button>
+        </div>
+      </div>
+
+      <!-- Section: Device & System Tools -->
+      <div class="panel-row tools-row">
+        <button class="action-btn" id="btn-soft-keyboard">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="16" rx="2"/>
+            <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/>
+          </svg>
+          Клавиатура
+        </button>
+        <button class="action-btn" id="btn-wakelock">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          WakeLock
+        </button>
+        <button class="action-btn" id="btn-fullscreen">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+          FULLSCREEN
+        </button>
+        <button class="action-btn pwa-btn" id="btn-pwa-install" style="display: none;">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Установить PWA
+        </button>
+        <button class="action-btn" id="btn-reconnect">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          Переподключить
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reconnecting overlay / toast -->
+  <div id="toast-banner" class="toast-banner hidden">
+    <span class="toast-dot"></span>
+    <span id="toast-text">Reconnecting to Mac stream...</span>
+  </div>
+
+  <!-- Low Battery Alert Modal (macOS Window Style) -->
+  <div id="battery-alert-modal" class="battery-modal hidden">
+    <div class="macos-window">
+      <!-- macOS Window Titlebar -->
+      <div class="macos-titlebar">
+        <div class="macos-traffic-lights">
+          <button class="macos-traffic-dot macos-dot-close" id="btn-traffic-close" aria-label="Закрыть" title="Закрыть"></button>
+        </div>
+        <div class="macos-window-title" id="macos-window-title">
+          <span class="macos-title-icon">🪫</span> Предупреждение о заряде
+        </div>
+        <button class="battery-modal-close" id="btn-close-battery-modal" aria-label="Закрыть" title="Закрыть">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <!-- macOS Alert Body -->
+      <div class="macos-window-content">
+        <div class="macos-alert-layout">
+          <div class="macos-alert-icon-wrapper">
+            <div class="macos-alert-symbol" id="battery-modal-icon">🪫</div>
+          </div>
+          <div class="macos-alert-text">
+            <h3 class="macos-alert-heading" id="battery-modal-title">Низкий уровень заряда!</h3>
+            <p class="macos-alert-desc" id="battery-modal-msg">Осталось менее 25% заряда. Пожалуйста, поставьте устройство на зарядку!</p>
+          </div>
+        </div>
+
+        <!-- macOS System-style Battery Info Badges -->
+        <div class="macos-badges-group">
+          <div class="macos-battery-badge" id="battery-badge-mac">
+            <div class="macos-badge-device">
+              <span class="device-glyph">💻</span>
+              <span class="device-name">Mac</span>
+            </div>
+            <span class="device-val" id="mac-batt-val">--%</span>
+          </div>
+          <div class="macos-battery-badge" id="battery-badge-tablet">
+            <div class="macos-badge-device">
+              <span class="device-glyph">📱</span>
+              <span class="device-name">Планшет</span>
+            </div>
+            <span class="device-val" id="tablet-batt-val">--%</span>
+          </div>
+        </div>
+
+        <!-- macOS Action Button Footer -->
+        <div class="macos-window-footer">
+          <button class="macos-btn macos-btn-primary" id="btn-dismiss-battery">Понятно</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>

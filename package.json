@@ -1,0 +1,27 @@
+{
+  "name": "android-duo",
+  "version": "1.0.0",
+  "description": "Transform your Android/Xiaomi tablet into a high-performance second touch display and trackpad for macOS",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "run": "./start.sh",
+    "build:native": "clang -fobjc-arc -c native/virtual_display.m -o native/virtual_display.o && swiftc -O -parse-as-library -import-objc-header native/virtual_display.h native/mac_host.swift native/virtual_display.o -o native/mac_host",
+    "postinstall": "npm run build:native"
+  },
+  "keywords": [
+    "macos",
+    "android",
+    "tablet",
+    "display",
+    "screencapturekit",
+    "touchpad",
+    "touchscreen"
+  ],
+  "author": "Open Source",
+  "license": "MIT",
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.18.0"
+  }
+}

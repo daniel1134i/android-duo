@@ -1,0 +1,6 @@
+node_modules/
+native/mac_host
+native/*.o
+.DS_Store
+*.log
+*.zip
