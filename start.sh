@@ -26,7 +26,7 @@ if [ ! -f "native/mac_host" ] || [ "native/mac_host.swift" -nt "native/mac_host"
         read -rp "Press Enter to exit..."
         exit 1
     fi
-    clang -fobjc-arc -c native/virtual_display.m -o native/virtual_display.o && swiftc -O -parse-as-library -import-objc-header native/virtual_display.h native/mac_host.swift native/virtual_display.o -o native/mac_host
+    clang -fobjc-arc -c native/virtual_display.m -o native/virtual_display.o && swiftc -O -parse-as-library -import-objc-header native/virtual_display.h native/mac_host.swift native/virtual_display.o -o native/mac_host && codesign --force -s - --identifier com.daniel.androidduo -r='designated => identifier "com.daniel.androidduo"' native/mac_host
     if [ $? -ne 0 ]; then
         echo "❌ Compilation failed!"
         read -rp "Press Enter to exit..."

@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ApplicationServices
+import ScreenCaptureKit
 
 // MARK: - Server Process & Telemetry Manager
 final class ServerManager: ObservableObject {
@@ -15,6 +16,7 @@ final class ServerManager: ObservableObject {
     @Published var isTabletCharging: Bool = false
     @Published var macBattery: Int? = nil
     @Published var localIP: String = "127.0.0.1"
+    @Published var hasScreenCapturePermission: Bool = CGPreflightScreenCaptureAccess()
     
     private var serverProcess: Process?
     private var telemetryTimer: Timer?
@@ -100,6 +102,60 @@ final class ServerManager: ObservableObject {
         }
     }
     
+    @discardableResult
+    func checkScreenCapturePermission() -> Bool {
+        let granted = CGPreflightScreenCaptureAccess()
+        if self.hasScreenCapturePermission != granted {
+            DispatchQueue.main.async {
+                let wasGranted = self.hasScreenCapturePermission
+                self.hasScreenCapturePermission = granted
+                if granted && !wasGranted && self.isRunning {
+                    fputs("[Android Duo App] Screen recording permission granted! Restarting server...\n", stderr)
+                    self.restartServer()
+                }
+            }
+        }
+        return granted
+    }
+    
+    func requestScreenCapturePermission() {
+        _ = CGRequestScreenCaptureAccess()
+        
+        // Trigger a lightweight ScreenCaptureKit query from this active GUI application
+        // so macOS WindowServer records Android Duo.app in System Settings
+        Task {
+            _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        }
+        
+        let modernURL = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture")
+        let legacyURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        
+        if let modernURL = modernURL, NSWorkspace.shared.open(modernURL) {
+            // Modern settings opened
+        } else if let legacyURL = legacyURL {
+            NSWorkspace.shared.open(legacyURL)
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            _ = self?.checkScreenCapturePermission()
+        }
+    }
+    
+    func revealAppInFinder() {
+        let appURL = Bundle.main.bundleURL
+        NSWorkspace.shared.activateFileViewerSelecting([appURL])
+    }
+    
+    func relaunchApp() {
+        stopServer()
+        let appPath = Bundle.main.bundleURL.path
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "sleep 0.6; open '\(appPath)'"]
+        try? p.run()
+        NSApp.terminate(nil)
+    }
+    
     private func cleanPort3000() {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -135,6 +191,14 @@ final class ServerManager: ObservableObject {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             
             DispatchQueue.main.async {
+                let localGranted = self.checkScreenCapturePermission()
+                if let serverGranted = json["screenCaptureGranted"] as? Bool {
+                    if serverGranted && !self.hasScreenCapturePermission {
+                        self.hasScreenCapturePermission = true
+                    } else if !serverGranted && !localGranted && self.hasScreenCapturePermission {
+                        self.hasScreenCapturePermission = false
+                    }
+                }
                 let connectedCount = (json["connectedClients"] as? Int) ?? 0
                 self.isConnected = (connectedCount > 0)
                 
@@ -293,7 +357,6 @@ struct DashboardView: View {
     @ObservedObject var server = ServerManager.shared
     @ObservedObject var mode = AppModeManager.shared
     @State private var showingCopiedAlert = false
-    @State private var hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
     let permTimer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
     
     var body: some View {
@@ -355,29 +418,55 @@ struct DashboardView: View {
             Divider()
             
             // Screen Recording Permission Banner
-            if !hasScreenRecordingPermission {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Требуется разрешение «Запись экрана»")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Включите тумблер для Android Duo в Настройках Mac")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button("Настройки...") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                            NSWorkspace.shared.open(url)
+            if !server.hasScreenCapturePermission {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.system(size: 22))
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Требуется разрешение «Запись экрана»")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Для трансляции экрана включите тумблер для Android Duo в Настройках Mac.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
                         }
+                        
+                        Spacer()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .font(.system(size: 11))
+                    
+                    Text("💡 Если Android Duo нет в списке: нажмите «Показать в Finder» и перетащите иконку Android Duo в окно настроек (или нажмите «+» в настройках).")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.secondary)
+                    
+                    HStack(spacing: 8) {
+                        Button("Настройки...") {
+                            server.requestScreenCapturePermission()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .font(.system(size: 11, weight: .semibold))
+                        
+                        Button("Показать в Finder") {
+                            server.revealAppInFinder()
+                        }
+                        .buttonStyle(.bordered)
+                        .font(.system(size: 11))
+                        
+                        Button("Перезапустить") {
+                            server.relaunchApp()
+                        }
+                        .buttonStyle(.bordered)
+                        .font(.system(size: 11))
+                    }
                 }
-                .padding(10)
+                .padding(12)
                 .background(Color.orange.opacity(0.12))
                 .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
                 .padding(.horizontal, 20)
                 .padding(.top, 10)
             }
@@ -542,9 +631,15 @@ struct DashboardView: View {
             .padding(.vertical, 12)
             .background(Color(NSColor.windowBackgroundColor))
         }
-        .frame(width: 440, height: 490)
+        .frame(width: 440, height: 520)
         .onReceive(permTimer) { _ in
-            hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
+            _ = server.checkScreenCapturePermission()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            _ = server.checkScreenCapturePermission()
+        }
+        .onAppear {
+            _ = server.checkScreenCapturePermission()
         }
     }
 }
@@ -582,14 +677,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let mode = AppModeManager.shared
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Start server automatically
-        server.startServer()
-        
         // 1. Setup Menu Bar Status Item
         setupStatusItem()
         
         // 2. Setup Main Dashboard Window
         setupMainWindow()
+        
+        // Check and request screen capture permission if not granted
+        if !server.checkScreenCapturePermission() {
+            fputs("[Android Duo App] Screen recording permission not granted yet, requesting access...\n", stderr)
+            server.requestScreenCapturePermission()
+        }
+        
+        // Start server automatically
+        server.startServer()
         
         // 3. Register Global Keyboard Shortcut (Opt+Cmd+Right Arrow) to throw window to tablet
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -599,6 +700,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return event
         }
+    }
+    
+    func applicationDidBecomeActive(_ notification: Notification) {
+        _ = server.checkScreenCapturePermission()
     }
     
     private func setupStatusItem() {
@@ -627,6 +732,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         statusItem.isEnabled = false
         menu.addItem(statusItem)
+        
+        // Screen Recording Permission Notice in menu
+        if !server.hasScreenCapturePermission {
+            let permItem = NSMenuItem(title: "⚠️ Требуется «Запись экрана» (Нажмите)", action: #selector(openPermissionsAction), keyEquivalent: "")
+            permItem.target = self
+            menu.addItem(permItem)
+        }
         
         // Stats
         if server.isConnected {
@@ -722,6 +834,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let url = URL(string: "http://localhost:3000") {
             NSWorkspace.shared.open(url)
         }
+    }
+    
+    @objc private func openPermissionsAction() {
+        server.requestScreenCapturePermission()
     }
     
     @objc private func restartAction() {

@@ -81,6 +81,10 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
                 }
             } catch {
                 fputs("[mac_host] Attempt \(attempt) SCShareableContent notice: \(error.localizedDescription). Waiting...\n", stderr)
+                if !CGPreflightScreenCaptureAccess() {
+                    fputs("[mac_host] TCC Error: Screen Recording permission is NOT active. Please grant permission in System Settings -> Privacy & Security -> Screen & System Audio Recording.\n", stderr)
+                    exit(2)
+                }
             }
             try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
         }
@@ -613,6 +617,11 @@ struct MacHostApp {
             if args[i] == "--no-virtual" { enableVirtual = false }
             if args[i] == "--width", i + 1 < args.count, let val = UInt32(args[i + 1]) { virtualWidth = val }
             if args[i] == "--height", i + 1 < args.count, let val = UInt32(args[i + 1]) { virtualHeight = val }
+        }
+        
+        if !CGPreflightScreenCaptureAccess() {
+            fputs("[mac_host] TCC Error: Screen Recording permission is NOT active. Please grant permission in System Settings -> Privacy & Security -> Screen & System Audio Recording.\n", stderr)
+            exit(2)
         }
         
         let virtualDisplayID: CGDirectDisplayID

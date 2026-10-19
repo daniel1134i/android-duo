@@ -59,8 +59,15 @@ cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
 </plist>
 EOF
 
-# 6. Ad-hoc codesign bundle so macOS TCC remembers screen recording permissions
-echo "🔏 Signing application bundle..."
-codesign --force --deep --sign - "$APP_DIR"
+# 6. Ad-hoc codesign bundle with stable designated requirement so macOS TCC remembers screen recording permissions
+echo "🔏 Signing application binary and bundle with stable designated requirement..."
+BUNDLE_ID="com.daniel.androidduo"
+codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/MacOS/Android Duo"
+codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR"
+
+# 7. Ensure application is discoverable in /Applications for macOS System Settings picker
+echo "🔗 Linking to /Applications for System Settings accessibility..."
+ln -sfn "$APP_DIR" "/Applications/Android Duo.app" 2>/dev/null || true
 
 echo "✅ Successfully built and signed: $APP_DIR"
+

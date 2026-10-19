@@ -69,6 +69,7 @@ let currentBrightness = 0.5;
 let adbBrightnessTimeout = null;
 const mjpegClients = new Set();
 let lastClientDisconnectTime = 0;
+let isScreenCaptureGranted = null;
 
 function setTabletHardwareBrightness(val) {
   currentBrightness = Math.max(0.05, Math.min(1.0, val));
@@ -177,7 +178,8 @@ const server = http.createServer((req, res) => {
       port: PORT,
       display: currentDisplayInfo,
       battery: currentBattery,
-      connectedClients: wss ? wss.clients.size : 0
+      connectedClients: wss ? wss.clients.size : 0,
+      screenCaptureGranted: isScreenCaptureGranted
     }));
     return;
   }
@@ -500,7 +502,9 @@ function startNativeHost() {
       bufferAccumulator = bufferAccumulator.subarray(totalPacketSize);
 
       if (frameType === 0x01) {
-        // JPEG Frame
+        // JPEG Frame - screen capture is active and working
+        isScreenCaptureGranted = true;
+        nativeFailures = 0;
         broadcastJpegFrame(payload);
       } else if (frameType === 0x02) {
         // JSON Message
@@ -516,6 +520,7 @@ function startNativeHost() {
             }
           } else if (json.type === 'display_info') {
             currentDisplayInfo = json;
+            isScreenCaptureGranted = true;
             console.log(`[Display] Active display: ${json.width}x${json.height} @ ${json.fps}fps (ID: ${json.displayID})`);
             // Broadcast display info to all clients
             for (const client of wss.clients) {
@@ -542,18 +547,27 @@ function startNativeHost() {
 
   nativeProcess.stderr.on('data', (data) => {
     const text = data.toString().trim();
-    if (text) console.log(text);
+    if (text) {
+      console.log(text);
+      if (text.includes('Screen Recording permission is NOT active') || text.includes('TCC Error') || text.includes('TCC Notice')) {
+        isScreenCaptureGranted = false;
+      }
+    }
   });
 
   nativeProcess.on('error', (err) => {
     console.error('[Native] mac_host process error:', err.message);
-    superviseNativeHost();
+    superviseNativeHost(false);
   });
 
   nativeProcess.on('exit', (code, signal) => {
     console.log(`[Native] mac_host exited with code ${code}, signal ${signal}`);
+    const isPermissionError = (code === 2);
+    if (isPermissionError) {
+      isScreenCaptureGranted = false;
+    }
     nativeProcess = null;
-    superviseNativeHost();
+    superviseNativeHost(isPermissionError);
   });
 }
 
@@ -562,13 +576,17 @@ let isRestartingNative = false;
 let nativeRestartTimer = null;
 let nativeFailures = 0;
 
-function superviseNativeHost() {
+function superviseNativeHost(isPermissionError = false) {
   if (isShuttingDown || isRestartingNative) return;
   isRestartingNative = true;
   nativeFailures++;
   
-  const delay = nativeFailures > 2 ? 6000 : 2000;
-  console.warn(`[Supervisor] mac_host process terminated. Auto-recovering in ${delay}ms (failures: ${nativeFailures})...`);
+  const delay = isPermissionError ? 5000 : (nativeFailures > 2 ? 6000 : 2000);
+  if (isPermissionError) {
+    console.warn(`[Supervisor] Screen recording permission required. Checking again in ${delay}ms...`);
+  } else {
+    console.warn(`[Supervisor] mac_host process terminated. Auto-recovering in ${delay}ms (failures: ${nativeFailures})...`);
+  }
   if (nativeRestartTimer) clearTimeout(nativeRestartTimer);
   nativeRestartTimer = setTimeout(() => {
     isRestartingNative = false;
