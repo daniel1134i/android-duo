@@ -560,18 +560,22 @@ function startNativeHost() {
 let isShuttingDown = false;
 let isRestartingNative = false;
 let nativeRestartTimer = null;
+let nativeFailures = 0;
 
 function superviseNativeHost() {
   if (isShuttingDown || isRestartingNative) return;
   isRestartingNative = true;
-  console.warn('[Supervisor] mac_host process terminated. Auto-recovering in 1000ms...');
+  nativeFailures++;
+  
+  const delay = nativeFailures > 2 ? 6000 : 2000;
+  console.warn(`[Supervisor] mac_host process terminated. Auto-recovering in ${delay}ms (failures: ${nativeFailures})...`);
   if (nativeRestartTimer) clearTimeout(nativeRestartTimer);
   nativeRestartTimer = setTimeout(() => {
     isRestartingNative = false;
     if (!isShuttingDown) {
       startNativeHost();
     }
-  }, 1000);
+  }, delay);
 }
 
 // Cleanup on shutdown

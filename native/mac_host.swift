@@ -60,25 +60,41 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         self.targetFPS = fps
         self.quality = quality
         
+        // 1. Check Screen Recording permission gracefully
+        if !CGPreflightScreenCaptureAccess() {
+            fputs("[mac_host] ⚠️ Screen recording permission not granted yet. Requesting access...\n", stderr)
+            CGRequestScreenCaptureAccess()
+            
+            // Wait patiently for the user to grant permission without crashing or looping
+            while !CGPreflightScreenCaptureAccess() {
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            }
+            fputs("[mac_host] ✅ Screen recording permission successfully granted!\n", stderr)
+        }
+        
         var display: SCDisplay? = nil
         
         // Retry loop to ensure ScreenCaptureKit registers the newly created virtual display
-        for attempt in 1...15 {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            self.availableDisplays = content.displays
-            let ids = content.displays.map { "\($0.displayID): \($0.width)x\($0.height)" }.joined(separator: ", ")
-            fputs("[mac_host] Attempt \(attempt) displays: [\(ids)] (looking for \(preferredDisplayID ?? 0))\n", stderr)
-            
-            if let preferred = preferredDisplayID, let found = content.displays.first(where: { $0.displayID == preferred }) {
-                fputs("[mac_host] Found preferred virtual display ID \(preferred) on attempt \(attempt)\n", stderr)
-                display = found
-                break
-            } else if let secondary = content.displays.first(where: { $0.displayID != CGMainDisplayID() }) {
-                fputs("[mac_host] Found secondary display ID \(secondary.displayID) on attempt \(attempt)\n", stderr)
-                display = secondary
-                break
+        for attempt in 1...30 {
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                self.availableDisplays = content.displays
+                let ids = content.displays.map { "\($0.displayID): \($0.width)x\($0.height)" }.joined(separator: ", ")
+                fputs("[mac_host] Attempt \(attempt) displays: [\(ids)] (looking for \(preferredDisplayID ?? 0))\n", stderr)
+                
+                if let preferred = preferredDisplayID, let found = content.displays.first(where: { $0.displayID == preferred }) {
+                    fputs("[mac_host] Found preferred virtual display ID \(preferred) on attempt \(attempt)\n", stderr)
+                    display = found
+                    break
+                } else if let secondary = content.displays.first(where: { $0.displayID != CGMainDisplayID() }) {
+                    fputs("[mac_host] Found secondary display ID \(secondary.displayID) on attempt \(attempt)\n", stderr)
+                    display = secondary
+                    break
+                }
+            } catch {
+                fputs("[mac_host] Attempt \(attempt) SCShareableContent notice: \(error.localizedDescription). Waiting...\n", stderr)
             }
-            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
         }
         
         if display == nil {

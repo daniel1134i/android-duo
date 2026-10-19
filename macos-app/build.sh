@@ -53,10 +53,14 @@ cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
     <string>12.3</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>NSRequiresAquaSystemAppearance</key>
-    <false/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Android Duo требует доступ к записи экрана для беспроводной трансляции дисплея на планшет Xiaomi Pad SE.</string>
 </dict>
 </plist>
 EOF
 
-echo "✅ Successfully built: $APP_DIR"
+# 6. Ad-hoc codesign bundle so macOS TCC remembers screen recording permissions
+echo "🔏 Signing application bundle..."
+codesign --force --deep --sign - "$APP_DIR"
+
+echo "✅ Successfully built and signed: $APP_DIR"

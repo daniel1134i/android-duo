@@ -287,6 +287,8 @@ struct DashboardView: View {
     @ObservedObject var server = ServerManager.shared
     @ObservedObject var mode = AppModeManager.shared
     @State private var showingCopiedAlert = false
+    @State private var hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
+    let permTimer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
     
     var body: some View {
         VStack(spacing: 0) {
@@ -345,6 +347,34 @@ struct DashboardView: View {
             .padding(.bottom, 16)
             
             Divider()
+            
+            // Screen Recording Permission Banner
+            if !hasScreenRecordingPermission {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Требуется разрешение «Запись экрана»")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Включите тумблер для Android Duo в Настройках Mac")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("Настройки...") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .font(.system(size: 11))
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(8)
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+            }
             
             // Content Body
             ScrollView {
@@ -507,6 +537,9 @@ struct DashboardView: View {
             .background(Color(NSColor.windowBackgroundColor))
         }
         .frame(width: 440, height: 490)
+        .onReceive(permTimer) { _ in
+            hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
+        }
     }
 }
 
