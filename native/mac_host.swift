@@ -60,16 +60,6 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         self.targetFPS = fps
         self.quality = quality
         
-        // 1. Check Screen Recording permission gracefully
-        if !CGPreflightScreenCaptureAccess() {
-            fputs("[mac_host] ⚠️ Screen recording permission not granted yet. Requesting access...\n", stderr)
-            CGRequestScreenCaptureAccess()
-            for _ in 1...3 {
-                if CGPreflightScreenCaptureAccess() { break }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-        }
-        
         var display: SCDisplay? = nil
         
         // Retry loop to ensure ScreenCaptureKit registers the newly created virtual display
