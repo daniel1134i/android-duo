@@ -64,12 +64,10 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         if !CGPreflightScreenCaptureAccess() {
             fputs("[mac_host] ⚠️ Screen recording permission not granted yet. Requesting access...\n", stderr)
             CGRequestScreenCaptureAccess()
-            
-            // Wait patiently for the user to grant permission without crashing or looping
-            while !CGPreflightScreenCaptureAccess() {
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            for _ in 1...3 {
+                if CGPreflightScreenCaptureAccess() { break }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
-            fputs("[mac_host] ✅ Screen recording permission successfully granted!\n", stderr)
         }
         
         var display: SCDisplay? = nil

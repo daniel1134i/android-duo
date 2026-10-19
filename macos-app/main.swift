@@ -199,6 +199,12 @@ final class AppModeManager: ObservableObject {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         if let win = window {
+            if let mainScreen = NSScreen.screens.first {
+                let screenRect = mainScreen.visibleFrame
+                let x = screenRect.origin.x + (screenRect.width - 440) / 2
+                let y = screenRect.origin.y + (screenRect.height - 490) / 2
+                win.setFrame(NSRect(x: x, y: y, width: 440, height: 490), display: true)
+            }
             win.makeKeyAndOrderFront(nil)
             win.orderFrontRegardless()
         }
@@ -676,7 +682,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-        window.center()
+        if let mainScreen = NSScreen.screens.first {
+            let screenRect = mainScreen.visibleFrame
+            let x = screenRect.origin.x + (screenRect.width - 440) / 2
+            let y = screenRect.origin.y + (screenRect.height - 490) / 2
+            window.setFrame(NSRect(x: x, y: y, width: 440, height: 490), display: true)
+        } else {
+            window.center()
+        }
         window.delegate = self
         
         mode.window = window
