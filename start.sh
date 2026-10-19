@@ -53,17 +53,11 @@ if command -v adb >/dev/null 2>&1; then
         adb shell settings put global stay_on_while_plugged_in 3 >/dev/null 2>&1
         adb shell svc power stayon usb >/dev/null 2>&1
         adb shell settings put global policy_control immersive.full=* >/dev/null 2>&1
-        CHROME_RUNNING=$(adb shell "pidof com.android.chrome" 2>/dev/null | tr -d ' \r\n')
-        if [ -z "$CHROME_RUNNING" ]; then
-            echo "🚀 Automatically launching fullscreen browser on tablet (http://localhost:3000)..."
-            adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d "http://localhost:3000" >/dev/null 2>&1
-            (sleep 1; adb shell input keyevent 141 >/dev/null 2>&1) &
-            echo "✅ ADB reverse tunnel active: fullscreen browser launched on tablet."
-        else
-            echo "📱 Chrome is already running on tablet: bringing to front without opening new tab."
-            adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main >/dev/null 2>&1
-            echo "✅ ADB reverse tunnel active: using existing browser tab."
-        fi
+        echo "🚀 Directing tablet browser to USB tunnel (http://127.0.0.1:3000/?pwa=1)..."
+        adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d "http://127.0.0.1:3000/?pwa=1" >/dev/null 2>&1 || \
+        adb shell am start -a android.intent.action.VIEW -d "http://127.0.0.1:3000/?pwa=1" >/dev/null 2>&1
+        (sleep 1; adb shell input keyevent 141 >/dev/null 2>&1) &
+        echo "✅ ADB reverse tunnel active: USB mode engaged."
     fi
 fi
 

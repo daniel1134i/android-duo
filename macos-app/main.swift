@@ -10,6 +10,10 @@ final class ServerManager: ObservableObject {
     @Published var isRunning = false
     @Published var isConnected = false
     @Published var connectionType = "Поиск..."
+    @Published var transport: String = "none" // "usb", "wifi", "none"
+    @Published var isAdbConnected: Bool = false
+    @Published var isAdbReverseActive: Bool = false
+    @Published var clientIp: String = ""
     @Published var fps: Int = 90
     @Published var resolution: String = "1280x800"
     @Published var tabletBattery: Int? = nil
@@ -202,6 +206,18 @@ final class ServerManager: ObservableObject {
                 let connectedCount = (json["connectedClients"] as? Int) ?? 0
                 self.isConnected = (connectedCount > 0)
                 
+                if let tr = json["transport"] as? String {
+                    self.transport = tr
+                } else {
+                    self.transport = self.isConnected ? "wifi" : "none"
+                }
+                self.isAdbConnected = json["adbConnected"] as? Bool ?? false
+                self.isAdbReverseActive = json["adbReverseActive"] as? Bool ?? false
+                
+                if let clients = json["clients"] as? [[String: Any]], let first = clients.first, let ip = first["ip"] as? String {
+                    self.clientIp = ip
+                }
+                
                 if let ipsList = json["ips"] as? [[String: Any]], let first = ipsList.first, let addr = first["address"] as? String {
                     self.localIP = addr
                 } else if let ips = json["ips"] as? [String], let first = ips.first {
@@ -232,9 +248,13 @@ final class ServerManager: ObservableObject {
                 }
                 
                 if self.isConnected {
-                    self.connectionType = "⚡ USB / Wi-Fi"
+                    if self.transport == "usb" {
+                        self.connectionType = "⚡ USB (Прямой провод)"
+                    } else {
+                        self.connectionType = "📶 Wi-Fi (\(self.clientIp.isEmpty ? self.localIP : self.clientIp))"
+                    }
                 } else {
-                    self.connectionType = "Ожидание планшета..."
+                    self.connectionType = self.isAdbConnected ? "Ожидание открытия браузера..." : "Ожидание планшета..."
                 }
             }
         }.resume()
@@ -515,7 +535,11 @@ struct DashboardView: View {
                         HStack(spacing: 10) {
                             StatusMetricBox(title: "Частота", value: "\(server.fps) FPS", icon: "speedometer")
                             StatusMetricBox(title: "Разрешение", value: server.resolution, icon: "aspectratio")
-                            StatusMetricBox(title: "Канал", value: server.isConnected ? "USB / 90Hz" : "Wi-Fi", icon: "bolt.fill")
+                            StatusMetricBox(
+                                title: "Канал",
+                                value: server.isConnected ? (server.transport == "usb" ? "⚡ USB" : "📶 Wi-Fi") : (server.isAdbConnected ? "USB готов" : "Нет связи"),
+                                icon: server.transport == "usb" ? "bolt.fill" : (server.isConnected ? "wifi" : "cable.connector")
+                            )
                         }
                     }
                     .padding(14)
@@ -762,7 +786,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.removeAllItems()
         
         // Header Status
-        let statusTitle = server.isConnected ? "🟢 Xiaomi Pad SE: Подключен" : (server.isRunning ? "🟡 Ожидание планшета..." : "🔴 Сервер остановлен")
+        let statusTitle = server.isConnected ? (server.transport == "usb" ? "🟢 Xiaomi Pad SE: USB ⚡" : "🟢 Xiaomi Pad SE: Wi-Fi 📶") : (server.isRunning ? "🟡 Ожидание планшета..." : "🔴 Сервер остановлен")
         let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         statusItem.isEnabled = false
         menu.addItem(statusItem)
@@ -783,7 +807,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         
         // Stats
         if server.isConnected {
-            let statsTitle = "⚡ 90 FPS • \(server.resolution) • USB/Wi-Fi"
+            let statsTitle = "⚡ \(server.fps) FPS • \(server.resolution) • \(server.transport == "usb" ? "USB ⚡" : "Wi-Fi 📶")"
             let statsItem = NSMenuItem(title: statsTitle, action: nil, keyEquivalent: "")
             statsItem.isEnabled = false
             menu.addItem(statsItem)

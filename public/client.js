@@ -272,7 +272,10 @@
       }
     }
 
-    // Always keep localhost in candidates (for USB reconnection)
+    // Always keep 127.0.0.1 and localhost in candidates (for USB reconnection)
+    if (!list.includes(`127.0.0.1:${port}`)) {
+      list.push(`127.0.0.1:${port}`);
+    }
     if (!list.includes(`localhost:${port}`)) {
       list.push(`localhost:${port}`);
     }
@@ -296,15 +299,26 @@
 
   function upgradeToUsb(port) {
     const targetPort = port || state.serverPort || 3000;
-    const usbHost = `localhost:${targetPort}`;
-    if (state.connected && (state.activeHost === usbHost || state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'))) {
+    const usbHost = `127.0.0.1:${targetPort}`;
+    const isCurrentHostUsb = state.activeHost.startsWith('127.0.0.1') || state.activeHost.startsWith('localhost');
+    const isLocationUsb = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+
+    if (state.connected && isCurrentHostUsb && isLocationUsb) {
       return;
     }
+
     console.log(`[DuoDisplay] Upgrading connection to Zero-Latency USB (${usbHost})...`);
-    showToast('⚡ USB reconnected — Upgraded to Zero-Latency mode');
-    try {
-      history.replaceState(null, '', `http://${usbHost}/`);
-    } catch (_) {}
+    showToast('⚡ USB подключен — Переключение на сверхбыстрый USB-канал');
+
+    // If currently loaded from a Wi-Fi address (192.168.x.x), Chrome's Private Network Access
+    // policy blocks cross-network subresources and WebSockets to 127.0.0.1.
+    // Top-level location.replace cleanly moves the page origin to 127.0.0.1 with zero PNA/CORS issues.
+    if (!isLocationUsb) {
+      const usbUrl = `http://${usbHost}/?pwa=1`;
+      window.location.replace(usbUrl);
+      return;
+    }
+
     if (state.ws) {
       state.ws.onclose = null;
       state.ws.onerror = null;
@@ -384,15 +398,19 @@
     updateTransportUI(isUsb ? 'usb' : 'wifi', state.activeHost);
 
     if (isUsb) {
-      showToast('⚡ Connected via Zero-Latency USB');
+      showToast('⚡ Подключено по USB (0 мс)');
       try {
-        history.replaceState(null, '', `http://localhost:${state.serverPort}/`);
+        if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
+          history.replaceState(null, '', `http://${state.activeHost}/`);
+        }
       } catch (_) {}
     } else {
-      showToast(`📶 Connected via Wi-Fi (${state.activeHost.split(':')[0]})`);
+      showToast(`📶 Подключено по Wi-Fi (${state.activeHost.split(':')[0]})`);
       // Update browser URL so page refresh stays on Wi-Fi without dying
       try {
-        history.replaceState(null, '', `http://${state.activeHost}/`);
+        if (location.host === state.activeHost) {
+          history.replaceState(null, '', `http://${state.activeHost}/`);
+        }
       } catch (_) {}
     }
 
@@ -544,6 +562,13 @@
           try { localStorage.setItem('duo_server_port', msg.port); } catch (_) {}
         }
         updateCandidateHosts();
+
+        // If server informs USB reverse tunnel is active and client is currently on Wi-Fi, upgrade immediately!
+        if (msg.usbAvailable && !state.activeHost.startsWith('127.0.0.1') && !state.activeHost.startsWith('localhost')) {
+          console.log('[DuoDisplay] USB reverse tunnel detected on init. Upgrading to USB...');
+          upgradeToUsb(msg.port || state.serverPort);
+          return;
+        }
         // Fallthrough to display_info
       case 'display_info':
         if (msg.screenWidth && msg.screenHeight) {

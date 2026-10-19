@@ -70,6 +70,32 @@ let adbBrightnessTimeout = null;
 const mjpegClients = new Set();
 let lastClientDisconnectTime = 0;
 let isScreenCaptureGranted = null;
+let isAdbDeviceConnected = false;
+let isAdbReverseActive = false;
+
+function getClientIp(req) {
+  let ip = req.socket ? req.socket.remoteAddress : '';
+  if (!ip) return 'unknown';
+  if (ip.startsWith('::ffff:')) ip = ip.substring(7);
+  if (ip === '::1') ip = '127.0.0.1';
+  return ip;
+}
+
+function isUsbIp(ip) {
+  return ip === '127.0.0.1' || ip === 'localhost';
+}
+
+function getActiveTransport() {
+  if (!wss || wss.clients.size === 0) return 'none';
+  let hasWifi = false;
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      if (client.isUsb) return 'usb';
+      hasWifi = true;
+    }
+  }
+  return hasWifi ? 'wifi' : 'none';
+}
 
 function setTabletHardwareBrightness(val) {
   currentBrightness = Math.max(0.05, Math.min(1.0, val));
@@ -173,13 +199,21 @@ const server = http.createServer((req, res) => {
   // REST API: Device & Network Info
   if (req.url === '/api/info') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
+    const transport = getActiveTransport();
     res.end(JSON.stringify({
       ips: getLocalIPs(),
       port: PORT,
       display: currentDisplayInfo,
       battery: currentBattery,
       connectedClients: wss ? wss.clients.size : 0,
-      screenCaptureGranted: isScreenCaptureGranted
+      screenCaptureGranted: isScreenCaptureGranted,
+      transport: transport,
+      adbConnected: isAdbDeviceConnected,
+      adbReverseActive: isAdbReverseActive,
+      clients: Array.from(wss ? wss.clients : []).filter(c => c.readyState === WebSocket.OPEN).map(c => ({
+        ip: c.clientIp || 'unknown',
+        isUsb: !!c.isUsb
+      }))
     }));
     return;
   }
@@ -231,8 +265,10 @@ wss.on('connection', (ws, req) => {
     ws._socket.setNoDelay(true);
   }
 
-  const ip = req.socket ? req.socket.remoteAddress : 'unknown';
-  console.log(`[WebSocket] Client connected from ${ip}`);
+  const ip = getClientIp(req);
+  ws.clientIp = ip;
+  ws.isUsb = isUsbIp(ip);
+  console.log(`[WebSocket] Client connected from ${ip} (Channel: ${ws.isUsb ? '⚡ USB' : '📶 Wi-Fi'})`);
 
   // Send initial display info matching client expectations with Wi-Fi fallback IPs
   const localIps = getLocalIPs();
@@ -244,6 +280,9 @@ wss.on('connection', (ws, req) => {
     port: PORT,
     wifiIps: localIps.map(i => i.address),
     wifiUrls: localIps.map(i => `http://${i.address}:${PORT}`),
+    usbAvailable: isAdbReverseActive,
+    adbConnected: isAdbDeviceConnected,
+    isUsbClient: ws.isUsb,
     displays: currentDisplayInfo.displays || [{
       id: currentDisplayInfo.displayID || 0,
       name: 'macOS Display',
@@ -252,6 +291,16 @@ wss.on('connection', (ws, req) => {
       primary: true
     }]
   }));
+
+  // If a client connects from Wi-Fi but USB tunnel is ready, immediately prompt upgrade to USB
+  if (!ws.isUsb && isAdbReverseActive) {
+    console.log(`[WebSocket] Wi-Fi client (${ip}) connected while USB reverse tunnel is active. Prompting upgrade.`);
+    ws.send(JSON.stringify({
+      type: 'usb_connected',
+      port: PORT,
+      url: `http://127.0.0.1:${PORT}/?pwa=1`
+    }));
+  }
 
   // Send latest frame immediately if available, and request fresh capture from native host
   if (lastJpegFrame) {
@@ -618,17 +667,23 @@ process.on('SIGTERM', cleanup);
 // Automated ADB Reconnect Watcher
 function startAdbWatcher() {
   const { exec } = require('child_process');
-  let isReverseActive = false;
 
   setInterval(() => {
     exec('adb devices', (err, stdout) => {
-      if (err) return;
+      if (err) {
+        isAdbDeviceConnected = false;
+        isAdbReverseActive = false;
+        return;
+      }
       const lines = stdout.split('\n').filter(l => l.includes('\tdevice'));
-      if (lines.length > 0) {
-        if (!isReverseActive) {
+      const devicePresent = lines.length > 0;
+      isAdbDeviceConnected = devicePresent;
+
+      if (devicePresent) {
+        if (!isAdbReverseActive) {
           exec(`adb reverse tcp:${PORT} tcp:${PORT}`, (rErr) => {
             if (!rErr) {
-              isReverseActive = true;
+              isAdbReverseActive = true;
               console.log(`[ADB] ⚡ Tablet connected via USB! Auto-reversed port ${PORT}.`);
               
               // Wake tablet screen if asleep
@@ -644,40 +699,46 @@ function startAdbWatcher() {
               exec('adb shell svc power stayon true >/dev/null 2>&1', () => {});
               exec('adb shell settings put system screen_off_timeout 2147483647 >/dev/null 2>&1', () => {});
 
-              // 1. Check if any client is already actively connected over WebSocket (e.g. streaming over Wi-Fi)
-              const hasActiveClients = Array.from(wss.clients).some(c => c.readyState === WebSocket.OPEN);
-              if (hasActiveClients) {
-                console.log(`[ADB] 📱 Client is already active (${wss.clients.size} connected). Upgrading connection to USB without opening new page.`);
-                for (const client of wss.clients) {
-                  if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({ type: 'usb_connected', port: PORT }));
+              const usbUrl = `http://127.0.0.1:${PORT}/?pwa=1`;
+
+              // 1. Notify any active Wi-Fi clients to immediately navigate to the USB tunnel
+              let hasUsbClient = false;
+              let wifiClientCount = 0;
+              for (const client of wss.clients) {
+                if (client.readyState === WebSocket.OPEN) {
+                  if (client.isUsb) {
+                    hasUsbClient = true;
+                  } else {
+                    wifiClientCount++;
+                    client.send(JSON.stringify({ type: 'usb_connected', port: PORT, url: usbUrl }));
                   }
                 }
-                return;
               }
 
-              // 2. Check if client disconnected very recently (during cable unplug/replug handover)
-              if (Date.now() - lastClientDisconnectTime < 15000) {
-                console.log(`[ADB] 📱 Client was connected recently (${Math.round((Date.now() - lastClientDisconnectTime)/1000)}s ago). Reusing existing page without re-launching.`);
-                return;
+              if (wifiClientCount > 0) {
+                console.log(`[ADB] 📱 Notified ${wifiClientCount} active Wi-Fi client(s) to switch to USB (${usbUrl}).`);
               }
 
-              // 3. No active client and not a recent handover -> Automatically launch browser on tablet
-              console.log(`[ADB] 🚀 Auto-launching full-screen browser on tablet: http://localhost:${PORT}/?pwa=1`);
-              exec(`adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d "http://localhost:${PORT}/?pwa=1" >/dev/null 2>&1`, (launchErr) => {
-                if (launchErr) {
-                  exec(`adb shell am start -a android.intent.action.VIEW -d "http://localhost:${PORT}/?pwa=1" >/dev/null 2>&1`, () => {});
-                }
-                // Send F11 keycode (141) to trigger fullscreen in supported browsers
-                setTimeout(() => {
-                  exec('adb shell input keyevent 141 >/dev/null 2>&1', () => {}); // F11
-                }, 1000);
-              });
+              // 2. Direct tablet browser to USB tunnel (127.0.0.1) if not already connected via USB
+              if (!hasUsbClient) {
+                console.log(`[ADB] 🚀 Directing tablet browser to USB tunnel: ${usbUrl}`);
+                exec(`adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d "${usbUrl}" >/dev/null 2>&1`, (launchErr) => {
+                  if (launchErr) {
+                    exec(`adb shell am start -a android.intent.action.VIEW -d "${usbUrl}" >/dev/null 2>&1`, () => {});
+                  }
+                  setTimeout(() => {
+                    exec('adb shell input keyevent 141 >/dev/null 2>&1', () => {}); // F11
+                  }, 800);
+                });
+              }
             }
           });
         }
       } else {
-        isReverseActive = false;
+        if (isAdbReverseActive) {
+          console.log('[ADB] 🔌 USB device disconnected.');
+        }
+        isAdbReverseActive = false;
       }
     });
   }, 1500);
