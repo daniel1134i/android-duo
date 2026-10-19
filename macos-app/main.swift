@@ -278,6 +278,11 @@ final class AppModeManager: ObservableObject {
         isMenuBarOnly = true
         window?.orderOut(nil)
         NSApp.setActivationPolicy(.accessory)
+        
+        let notif = NSUserNotification()
+        notif.title = "Android Duo"
+        notif.informativeText = "Приложение свёрнуто в Menu Bar (вверху у часов). Нажмите на иконку «📱 Duo», чтобы вернуть окно."
+        NSUserNotificationCenter.default.deliver(notif)
     }
     
     func toggleMode() {
@@ -711,6 +716,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "ipad.and.iphone", accessibilityDescription: "Android Duo")
             button.image?.isTemplate = true
+            button.title = " Duo"
+            button.toolTip = "Android Duo — нажмите, чтобы открыть меню или вернуть окно дашборда"
         }
         
         let menu = NSMenu()
@@ -733,6 +740,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem.isEnabled = false
         menu.addItem(statusItem)
         
+        // Window & Dock switcher placed prominently at the top
+        let windowToggleItem = NSMenuItem(title: "🪟 Открыть дашборд (Вернуть в Dock)", action: #selector(showWindowFromMenu), keyEquivalent: "o")
+        windowToggleItem.target = self
+        menu.addItem(windowToggleItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
         // Screen Recording Permission Notice in menu
         if !server.hasScreenCapturePermission {
             let permItem = NSMenuItem(title: "⚠️ Требуется «Запись экрана» (Нажмите)", action: #selector(openPermissionsAction), keyEquivalent: "")
@@ -754,13 +768,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 menu.addItem(battItem)
             }
         }
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Window & Dock switcher
-        let windowToggleItem = NSMenuItem(title: "🪟 Показать окно (Вернуть в Dock)", action: #selector(showWindowFromMenu), keyEquivalent: "o")
-        windowToggleItem.target = self
-        menu.addItem(windowToggleItem)
         
         // Quick Action
         let moveWinItem = NSMenuItem(title: "🚀 Перенести активное окно на планшет", action: #selector(moveWindowAction), keyEquivalent: "")
