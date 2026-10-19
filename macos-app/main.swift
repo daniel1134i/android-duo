@@ -252,10 +252,17 @@ final class AppModeManager: ObservableObject {
         }
     }
     
+    @Published var hideFromDockInMenuBarMode: Bool {
+        didSet {
+            UserDefaults.standard.set(hideFromDockInMenuBarMode, forKey: "hideFromDockInMenuBarMode")
+        }
+    }
+    
     weak var window: NSWindow?
     
     init() {
         self.minimizeToMenuBarOnClose = UserDefaults.standard.object(forKey: "minimizeToMenuBarOnClose") as? Bool ?? true
+        self.hideFromDockInMenuBarMode = UserDefaults.standard.object(forKey: "hideFromDockInMenuBarMode") as? Bool ?? false
     }
     
     func switchToDockAndWindow() {
@@ -266,8 +273,8 @@ final class AppModeManager: ObservableObject {
             if let mainScreen = NSScreen.screens.first {
                 let screenRect = mainScreen.visibleFrame
                 let x = screenRect.origin.x + (screenRect.width - 440) / 2
-                let y = screenRect.origin.y + (screenRect.height - 490) / 2
-                win.setFrame(NSRect(x: x, y: y, width: 440, height: 490), display: true)
+                let y = screenRect.origin.y + (screenRect.height - 520) / 2
+                win.setFrame(NSRect(x: x, y: y, width: 440, height: 520), display: true)
             }
             win.makeKeyAndOrderFront(nil)
             win.orderFrontRegardless()
@@ -277,7 +284,11 @@ final class AppModeManager: ObservableObject {
     func switchToMenuBarOnly() {
         isMenuBarOnly = true
         window?.orderOut(nil)
-        NSApp.setActivationPolicy(.accessory)
+        if hideFromDockInMenuBarMode {
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            NSApp.setActivationPolicy(.regular)
+        }
         
         let notif = NSUserNotification()
         notif.title = "Android Duo"
@@ -592,11 +603,13 @@ struct DashboardView: View {
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
                     
-                    // Settings Toggle
-                    HStack {
+                    // Settings Toggles
+                    VStack(alignment: .leading, spacing: 6) {
                         Toggle("При закрытии окна сворачивать в Menu Bar", isOn: $mode.minimizeToMenuBarOnClose)
                             .font(.system(size: 12))
-                        Spacer()
+                        Toggle("Скрывать значок из Dock при переносе в Menu Bar", isOn: $mode.hideFromDockInMenuBarMode)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 4)
                 }
@@ -711,12 +724,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ = server.checkScreenCapturePermission()
     }
     
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        mode.switchToDockAndWindow()
+        return true
+    }
+    
     private func setupStatusItem() {
+        let prefKey = "NSStatusItem Preferred Position AndroidDuoStatusItem"
+        CFPreferencesSetValue(prefKey as CFString, 180.0 as CFPropertyList, "com.apple.controlcenter" as CFString, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        CFPreferencesSynchronize("com.apple.controlcenter" as CFString, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        UserDefaults.standard.set(180.0, forKey: prefKey)
+        
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = "AndroidDuoStatusItem"
+        statusItem.behavior = [.removalAllowed]
+        
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "ipad.and.iphone", accessibilityDescription: "Android Duo")
             button.image?.isTemplate = true
             button.title = " Duo"
+            button.imagePosition = .imageLeading
             button.toolTip = "Android Duo — нажмите, чтобы открыть меню или вернуть окно дашборда"
         }
         
@@ -804,8 +831,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let mainScreen = NSScreen.screens.first {
             let screenRect = mainScreen.visibleFrame
             let x = screenRect.origin.x + (screenRect.width - 440) / 2
-            let y = screenRect.origin.y + (screenRect.height - 490) / 2
-            window.setFrame(NSRect(x: x, y: y, width: 440, height: 490), display: true)
+            let y = screenRect.origin.y + (screenRect.height - 520) / 2
+            window.setFrame(NSRect(x: x, y: y, width: 440, height: 520), display: true)
         } else {
             window.center()
         }
