@@ -4,3 +4,5 @@ native/*.o
 .DS_Store
 *.log
 *.zip
+Android Duo.app
+AppIcon.icns

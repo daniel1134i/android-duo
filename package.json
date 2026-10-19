@@ -7,7 +7,9 @@
     "start": "node server/index.js",
     "run": "./start.sh",
     "build:native": "clang -fobjc-arc -c native/virtual_display.m -o native/virtual_display.o && swiftc -O -parse-as-library -import-objc-header native/virtual_display.h native/mac_host.swift native/virtual_display.o -o native/mac_host",
-    "postinstall": "npm run build:native"
+    "build:app": "bash macos-app/build.sh",
+    "app": "open 'Android Duo.app'",
+    "postinstall": "npm run build:native && npm run build:app"
   },
   "keywords": [
     "macos",
