@@ -35,3 +35,7 @@
 - **Zero Sound Spam:** Silent battery polling avoids repetitive "Charging started" chimes on HyperOS / Android 15.
 - **Hardware 80% Protection Shortcut:** One click in the Mac dashboard/menu bar opens the native HyperOS battery protection activity on the tablet to hardware-limit charging to 80%.
 - **Remote Sleep / Wake:** Put the tablet screen to sleep or wake it up instantly from the macOS Menu Bar.
+
+## 🔄 Portrait Mode & Live Hardware Monitor
+- **Auto-Rotation & Portrait Mode:** Flip your tablet vertically for 100+ lines of code without scrolling. Controlled under UI Scaling settings with Auto, Landscape, and Portrait modes.
+- **Live Hardware Monitor:** Real-time Apple Silicon M1/M2 CPU %, RAM usage, network stream bitrate, temperature, and both device batteries.

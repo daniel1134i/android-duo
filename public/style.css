@@ -1277,3 +1277,69 @@ html, body {
   display: none;
 }
 
+/* --------------------------------------------------------------------------
+   Hardware Monitor & Live Telemetry Chips
+   -------------------------------------------------------------------------- */
+.hw-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 10px;
+  padding: 1px 7px;
+  letter-spacing: 0.5px;
+}
+
+.hw-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: hwPulse 1.8s infinite;
+}
+
+@keyframes hwPulse {
+  0% { transform: scale(0.9); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.4; }
+  100% { transform: scale(0.9); opacity: 1; }
+}
+
+.hw-monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.hw-stat-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.hw-chip-label {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.hw-chip-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: #38bdf8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+

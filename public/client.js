@@ -34,6 +34,8 @@
     selectedDisplay: null, // set dynamically from display_info
     remoteWidth: 1280,
     remoteHeight: 800,
+    orientationMode: 'auto',
+    isPortrait: false,
     renderMetrics: {
       scale: 1,
       offsetX: 0,
@@ -915,7 +917,7 @@
         break;
 
       case 'battery':
-        handleBatteryUpdate(msg.mac, msg.tablet, msg.guard || msg.batteryGuard);
+        handleBatteryUpdate(msg.mac, msg.tablet, msg.guard || msg.batteryGuard, msg.hw);
         break;
 
       case 'mac_state':
@@ -975,7 +977,7 @@
     dismissedKey: null
   };
 
-  function handleBatteryUpdate(mac, tablet, guard) {
+  function handleBatteryUpdate(mac, tablet, guard, hw) {
     if (mac) {
       if (mac.level !== null && mac.level !== undefined) batteryState.mac.level = mac.level;
       if (mac.charging !== undefined) batteryState.mac.charging = mac.charging;
@@ -999,7 +1001,41 @@
       }
     }
 
+    if (hw) {
+      updateHardwareMonitor(hw);
+    }
+
     updateBatteryUI();
+  }
+
+  function updateHardwareMonitor(hw) {
+    if (!hw) return;
+    const elCpu = document.getElementById('hw-cpu');
+    const elRam = document.getElementById('hw-ram');
+    const elNet = document.getElementById('hw-net');
+    const elTemp = document.getElementById('hw-temp');
+    const elMacBatt = document.getElementById('hw-mac-batt');
+    const elTabBatt = document.getElementById('hw-tablet-batt');
+
+    if (elCpu && hw.cpu !== undefined) {
+      elCpu.textContent = `${hw.cpu}%`;
+      elCpu.style.color = hw.cpu > 80 ? '#ef4444' : (hw.cpu > 50 ? '#f59e0b' : '#38bdf8');
+    }
+    if (elRam && hw.ramUsed && hw.ramTotal) {
+      elRam.textContent = `${hw.ramUsed} / ${hw.ramTotal} GB`;
+    }
+    if (elNet && hw.netSpeed) {
+      elNet.textContent = hw.netSpeed;
+    }
+    if (elTemp && (hw.tempDisplay || hw.tempMac)) {
+      elTemp.textContent = hw.tempDisplay || hw.tempMac;
+    }
+    if (elMacBatt && hw.macBatt !== undefined && hw.macBatt !== null) {
+      elMacBatt.textContent = `${hw.macBatt}% ${hw.macCharging ? '⚡' : ''}`;
+    }
+    if (elTabBatt && hw.tabletBatt !== undefined && hw.tabletBatt !== null) {
+      elTabBatt.textContent = `${hw.tabletBatt}% ${hw.tabletCharging ? '⚡' : ''}`;
+    }
   }
 
   function updateBatteryUI() {
@@ -2544,10 +2580,64 @@
         const res = btn.getAttribute('data-res');
         const [w, h] = res.split('x').map(n => parseInt(n, 10));
         if (w && h) {
-          sendJson({ type: 'set_resolution', width: w, height: h });
-          showToast(`Масштаб интерфейса: ${res}`);
+          const targetW = state.isPortrait ? Math.min(w, h) : Math.max(w, h);
+          const targetH = state.isPortrait ? Math.max(w, h) : Math.min(w, h);
+          sendJson({ type: 'set_resolution', width: targetW, height: targetH });
+          showToast(`Масштаб интерфейса: ${targetW}×${targetH}`);
         }
       });
+    }
+
+    // Screen Orientation Selector (Auto / Landscape / Portrait)
+    const orientationSelector = document.getElementById('orientation-selector');
+    if (orientationSelector) {
+      orientationSelector.addEventListener('click', (e) => {
+        const btn = e.target.closest('.segment-btn');
+        if (!btn) return;
+        orientationSelector.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const mode = btn.getAttribute('data-orientation');
+        state.orientationMode = mode;
+        if (mode === 'auto') {
+          showToast('🔄 Автоповорот: включен (по датчику планшета)');
+          checkAutoOrientation();
+        } else if (mode === 'portrait') {
+          setOrientation('portrait');
+          showToast('📱 Книжная ориентация (для кода и текста)');
+        } else if (mode === 'landscape') {
+          setOrientation('landscape');
+          showToast('🖥 Альбомная ориентация (горизонтально)');
+        }
+      });
+    }
+
+    function checkAutoOrientation() {
+      if (state.orientationMode !== 'auto') return;
+      const isPortraitNow = window.innerHeight > window.innerWidth ||
+        (window.screen.orientation && window.screen.orientation.type && window.screen.orientation.type.includes('portrait'));
+      if (isPortraitNow !== state.isPortrait) {
+        setOrientation(isPortraitNow ? 'portrait' : 'landscape');
+      }
+    }
+
+    function setOrientation(orient) {
+      state.isPortrait = (orient === 'portrait');
+      const curW = state.remoteWidth || 1280;
+      const curH = state.remoteHeight || 800;
+      const targetW = (orient === 'portrait') ? Math.min(curW, curH) : Math.max(curW, curH);
+      const targetH = (orient === 'portrait') ? Math.max(curW, curH) : Math.min(curW, curH);
+      if (targetW !== curW || targetH !== curH) {
+        state.remoteWidth = targetW;
+        state.remoteHeight = targetH;
+        sendJson({ type: 'set_resolution', width: targetW, height: targetH });
+        resizeCanvas();
+      }
+    }
+
+    window.addEventListener('resize', checkAutoOrientation);
+    window.addEventListener('orientationchange', () => setTimeout(checkAutoOrientation, 200));
+    if (window.screen.orientation) {
+      window.screen.orientation.addEventListener('change', checkAutoOrientation);
     }
 
     // Display Selector

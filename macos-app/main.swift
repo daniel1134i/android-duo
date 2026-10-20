@@ -16,6 +16,11 @@ final class ServerManager: ObservableObject {
     @Published var clientIp: String = ""
     @Published var fps: Int = 90
     @Published var resolution: String = "1280x800"
+    @Published var orientation: String = "auto"
+    @Published var cpuPercent: Int = 12
+    @Published var ramText: String = "6.1 / 8.0 GB"
+    @Published var netSpeed: String = "0.0 MB/s"
+    @Published var tempText: String = "36°C"
     @Published var tabletBattery: Int? = nil
     @Published var isTabletCharging: Bool = false
     @Published var isBatteryGuardActive: Bool = false
@@ -242,6 +247,19 @@ final class ServerManager: ObservableObject {
         URLSession.shared.dataTask(with: request).resume()
     }
 
+    func setOrientation(_ mode: String) {
+        guard let url = URL(string: "http://127.0.0.1:3000/api/orientation?mode=\(mode)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request) { [weak self] _, _, _ in
+            DispatchQueue.main.async {
+                self?.orientation = mode
+                self?.fetchTelemetry()
+            }
+        }.resume()
+    }
+
     func launchTabletApp(targetOverride: String? = nil) {
         var urlString = "http://127.0.0.1:3000/api/launch"
         if let target = targetOverride {
@@ -401,6 +419,20 @@ final class ServerManager: ObservableObject {
                 if let bg = json["batteryGuard"] as? [String: Any] {
                     self.isBatteryGuardActive = bg["active"] as? Bool ?? false
                     self.isBatteryGuardEnabled = bg["enabled"] as? Bool ?? true
+                }
+
+                if let hw = json["hw"] as? [String: Any] {
+                    if let cpu = hw["cpu"] as? Int { self.cpuPercent = cpu }
+                    if let ramU = hw["ramUsed"] as? String, let ramT = hw["ramTotal"] as? String {
+                        self.ramText = "\(ramU) / \(ramT) GB"
+                    }
+                    if let net = hw["netSpeed"] as? String { self.netSpeed = net }
+                    if let temp = hw["tempDisplay"] as? String ?? hw["tempMac"] as? String {
+                        self.tempText = temp
+                    }
+                }
+                if let orient = json["orientation"] as? String {
+                    self.orientation = orient
                 }
                 
                 if self.isConnected {
@@ -978,6 +1010,75 @@ struct DashboardView: View {
                     .padding(12)
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
+
+                    // Screen Orientation Settings
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "rotate.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.blue)
+                            Text("Ориентация экрана:")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        
+                        Picker("", selection: Binding(
+                            get: { server.orientation },
+                            set: { server.setOrientation($0) }
+                        )) {
+                            Text("🔄 Авто (Датчик)").tag("auto")
+                            Text("🖥 Альбомная").tag("landscape")
+                            Text("📱 Книжная (Код)").tag("portrait")
+                        }
+                        .pickerStyle(.segmented)
+                        
+                        Text(server.orientation == "auto"
+                            ? "💡 Экран сам поворачивается вертикально/горизонтально по гироскопу планшета."
+                            : (server.orientation == "portrait"
+                                ? "💡 Вертикальный монитор: помещается более 100 строк кода без скроллинга."
+                                : "💡 Стандартный горизонтальный экран для повседневной работы."))
+                            .font(.system(size: 10.5))
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                    .padding(12)
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                    .cornerRadius(10)
+
+                    // Real-time Hardware Monitor
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Image(systemName: "cpu")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.green)
+                            Text("Монитор железа (в реальном времени):")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 6, height: 6)
+                                Text("LIVE")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.green)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.12))
+                            .cornerRadius(8)
+                        }
+                        
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                            HwStatBox(label: "ЦП M2", value: "\(server.cpuPercent)%")
+                            HwStatBox(label: "Память", value: server.ramText)
+                            HwStatBox(label: "Сеть", value: server.netSpeed)
+                            HwStatBox(label: "Темп.", value: server.tempText)
+                            HwStatBox(label: "MacBook", value: server.macBattery != nil ? "\(server.macBattery!)%" : "--%")
+                            HwStatBox(label: "Планшет", value: server.tabletBattery != nil ? "\(server.tabletBattery!)%" : "--%")
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                    .cornerRadius(10)
                 }
                 .padding(20)
             }
@@ -1049,6 +1150,30 @@ struct StatusMetricBox: View {
         .padding(8)
         .background(Color(NSColor.textBackgroundColor).opacity(0.5))
         .cornerRadius(8)
+    }
+}
+
+struct HwStatBox: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.secondary)
+                .textCase(.uppercase)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(NSColor.textBackgroundColor).opacity(0.6))
+        .cornerRadius(6)
     }
 }
 
@@ -1331,6 +1456,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             defaultTargetItem.submenu = defaultSubmenu
             menu.addItem(defaultTargetItem)
 
+            let orientSubmenu = NSMenu()
+            let autoOrientItem = NSMenuItem(title: "🔄 Автоповорот (по датчику)", action: #selector(setOrientAutoAction), keyEquivalent: "")
+            autoOrientItem.target = self
+            autoOrientItem.state = server.orientation == "auto" ? .on : .off
+            orientSubmenu.addItem(autoOrientItem)
+
+            let landOrientItem = NSMenuItem(title: "🖥 Альбомная (горизонтально)", action: #selector(setOrientLandscapeAction), keyEquivalent: "")
+            landOrientItem.target = self
+            landOrientItem.state = server.orientation == "landscape" ? .on : .off
+            orientSubmenu.addItem(landOrientItem)
+
+            let portOrientItem = NSMenuItem(title: "📱 Книжная (вертикально для кода)", action: #selector(setOrientPortraitAction), keyEquivalent: "")
+            portOrientItem.target = self
+            portOrientItem.state = server.orientation == "portrait" ? .on : .off
+            orientSubmenu.addItem(portOrientItem)
+
+            let orientRootItem = NSMenuItem(title: "🔄 Ориентация экрана", action: nil, keyEquivalent: "")
+            orientRootItem.submenu = orientSubmenu
+            menu.addItem(orientRootItem)
+
             let guardTitle = server.isBatteryGuardEnabled ? "🛡 Защита батареи планшета (80%): Вкл" : "🛡 Защита батареи планшета (80%): Выкл"
             let guardItem = NSMenuItem(title: guardTitle, action: #selector(toggleBatteryGuardAction), keyEquivalent: "")
             guardItem.target = self
@@ -1502,6 +1647,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func wakeTabletAction() { server.sendPowerState("wake") }
     @objc private func toggleBatteryGuardAction() { server.toggleBatteryGuard(); refreshStatusMenu() }
     @objc private func openTabletBatterySettingsAction() { server.openTabletBatterySettings() }
+    @objc private func setOrientAutoAction() { server.setOrientation("auto"); refreshStatusMenu() }
+    @objc private func setOrientLandscapeAction() { server.setOrientation("landscape"); refreshStatusMenu() }
+    @objc private func setOrientPortraitAction() { server.setOrientation("portrait"); refreshStatusMenu() }
     
     @objc private func restartAction() {
         server.restartServer()

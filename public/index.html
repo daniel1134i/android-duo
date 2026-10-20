@@ -172,6 +172,50 @@
         </div>
       </div>
 
+      <!-- Section: Orientation (Auto / Landscape / Portrait) -->
+      <div class="panel-row">
+        <div class="row-label">ОРИЕНТАЦИЯ ЭКРАНА</div>
+        <div class="segmented-control" id="orientation-selector">
+          <button class="segment-btn active" data-orientation="auto" id="btn-orient-auto">🔄 Автоповорот (Датчик)</button>
+          <button class="segment-btn" data-orientation="landscape" id="btn-orient-land">🖥 Альбомная</button>
+          <button class="segment-btn" data-orientation="portrait" id="btn-orient-port">📱 Книжная (Код / Текст)</button>
+        </div>
+      </div>
+
+      <!-- Section: Real-time Hardware Monitor -->
+      <div class="panel-row">
+        <div class="row-label row-between">
+          <span>МОНИТОР ЖЕЛЕЗА (В РЕАЛЬНОМ ВРЕМЕНИ)</span>
+          <span class="hw-live-badge"><span class="hw-dot"></span> LIVE</span>
+        </div>
+        <div class="hw-monitor-grid" id="hw-monitor-grid">
+          <div class="hw-stat-chip">
+            <span class="hw-chip-label">ЦП M2</span>
+            <span class="hw-chip-val" id="hw-cpu">--%</span>
+          </div>
+          <div class="hw-stat-chip">
+            <span class="hw-chip-label">Память</span>
+            <span class="hw-chip-val" id="hw-ram">-- / -- GB</span>
+          </div>
+          <div class="hw-stat-chip">
+            <span class="hw-chip-label">Сеть</span>
+            <span class="hw-chip-val" id="hw-net">-- MB/s</span>
+          </div>
+          <div class="hw-stat-chip">
+            <span class="hw-chip-label">Температура</span>
+            <span class="hw-chip-val" id="hw-temp">--°C</span>
+          </div>
+          <div class="hw-stat-chip">
+            <span class="hw-chip-label">MacBook</span>
+            <span class="hw-chip-val" id="hw-mac-batt">--%</span>
+          </div>
+          <div class="hw-stat-chip">
+            <span class="hw-chip-label">Планшет</span>
+            <span class="hw-chip-val" id="hw-tablet-batt">--%</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Section: Pill / Toolbar Position -->
       <div class="panel-row">
         <div class="row-label row-between">
