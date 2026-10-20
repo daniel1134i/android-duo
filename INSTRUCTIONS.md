@@ -37,5 +37,7 @@
 - **Remote Sleep / Wake:** Put the tablet screen to sleep or wake it up instantly from the macOS Menu Bar.
 
 ## 🔄 Portrait Mode & Live Hardware Monitor
-- **Auto-Rotation & Portrait Mode:** Flip your tablet vertically for 100+ lines of code without scrolling. Controlled under UI Scaling settings with Auto, Landscape, and Portrait modes.
-- **Live Hardware Monitor:** Real-time Apple Silicon M1/M2 CPU %, RAM usage, network stream bitrate, temperature, and both device batteries.
+- **Auto-Rotation & Portrait Mode:** Flip your tablet vertically for 100+ lines of code without scrolling. Controlled under UI Scaling settings with Auto, Landscape, and Portrait modes (Landscape is default).
+- **📟 DUO-HUD Widget (Claude Code Style Retro Telemetry):**
+  - **Split Floating Pill:** Tap the left side of the tablet pill to toggle the compact dropdown HUD; tap the right side to open settings.
+  - **Live Metrics:** Real-time Apple M2 CPU %, RAM usage, Mac internet throughput (MB/s), stream FPS, 3-way temperatures (`M2`, `Pad CPU`, `Tablet Battery`), and battery levels for both devices. Also integrated in the macOS Menu Bar.
