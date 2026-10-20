@@ -1078,13 +1078,11 @@
       if (tFps) tFps.textContent = `${state.fps || 60} FPS`;
     }
     const tTmp = document.getElementById('t-hud-tmp');
-    const tTrans = document.getElementById('t-hud-transport');
     if (tTmp) {
       const macT = hw.tempMac || '45°C';
       const padCpuT = hw.tempTabletCpu || (hw.tempTablet && hw.tempTablet !== '--' ? hw.tempTablet : '43°C');
       const padBatT = hw.tempTabletBatt || (hw.tabletBatt !== undefined ? '33°C' : '--');
       tTmp.textContent = `M2: ${macT} · Pad: ${padCpuT} · Bat: ${padBatT}`;
-      if (tTrans) tTrans.textContent = state.transport === 'usb' ? '⚡USB' : '📶WiFi';
     }
     const tPwr = document.getElementById('t-hud-pwr');
     if (tPwr) {

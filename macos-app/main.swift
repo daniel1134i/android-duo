@@ -1214,8 +1214,6 @@ struct PixelHardwareHudView: View {
                     Text("Bat: \(server.tabletBattery != nil ? server.tabletTempText : "--")")
                         .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
                     Spacer()
-                    Text(server.transport == "usb" ? "⚡USB" : "📶WiFi")
-                        .foregroundColor(.cyan)
                     Text("│")
                         .foregroundColor(.secondary)
                 }
