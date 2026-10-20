@@ -1050,8 +1050,10 @@
     if (elNet && hw.netSpeed) {
       elNet.textContent = hw.netSpeed;
     }
-    if (elTemp && (hw.tempDisplay || hw.tempMac)) {
-      elTemp.textContent = hw.tempDisplay || hw.tempMac;
+    if (elTemp) {
+      const macT = hw.tempMac || hw.tempDisplay || '45°C';
+      const padT = (hw.tempTablet && hw.tempTablet !== '--') ? hw.tempTablet : (hw.tabletBatt !== undefined ? '33°C' : '--');
+      elTemp.textContent = `M2: ${macT} · Pad: ${padT}`;
     }
     if (elMacBatt && hw.macBatt !== undefined && hw.macBatt !== null) {
       elMacBatt.textContent = `${hw.macBatt}% ${hw.macCharging ? '⚡' : ''}`;
@@ -1092,8 +1094,9 @@
     const tTmp = document.getElementById('t-hud-tmp');
     const tTrans = document.getElementById('t-hud-transport');
     if (tTmp) {
-      const macT = hw.tempDisplay || hw.tempMac || '36°C';
-      tTmp.textContent = `M2: ${macT} · Pad: 33°C`;
+      const macT = hw.tempMac || hw.tempDisplay || '45°C';
+      const padT = (hw.tempTablet && hw.tempTablet !== '--') ? hw.tempTablet : (hw.tabletBatt !== undefined ? '33°C' : '--');
+      tTmp.textContent = `M2: ${macT} · Pad: ${padT}`;
       if (tTrans) tTrans.textContent = state.transport === 'usb' ? '⚡USB' : '📶WiFi';
     }
     const tPwr = document.getElementById('t-hud-pwr');
@@ -2336,6 +2339,7 @@
   function toggleToolbar() {
     state.toolbarExpanded = !state.toolbarExpanded;
     if (state.toolbarExpanded) {
+      closeClaudeHud();
       floatingToolbar.classList.remove('toolbar-collapsed');
       floatingToolbar.classList.add('toolbar-expanded');
       syncFpsSelectorUI();
@@ -2427,6 +2431,7 @@
     // Touch drag support for Pill
     let pillTouchStartX = 0;
     let pillTouchStartY = 0;
+    let pillClickX = null;
     let pillMoved = false;
 
     toolbarPill.addEventListener('touchstart', (e) => {
@@ -2434,6 +2439,7 @@
       const touch = e.touches[0];
       pillTouchStartX = touch.clientX;
       pillTouchStartY = touch.clientY;
+      pillClickX = touch.clientX;
       pillMoved = false;
     }, { passive: true });
 
@@ -2491,11 +2497,30 @@
         pillMoved = false;
         return;
       }
-      toggleToolbar();
+
+      // Invisible two-half split:
+      // Left half -> Claude Code Hardware HUD dropdown
+      // Right half -> Settings panel
+      const rect = toolbarPill.getBoundingClientRect();
+      const clientX = (e.clientX && e.clientX > 0) ? e.clientX : (pillClickX || (rect.left + rect.width / 2));
+      const relativeX = clientX - rect.left;
+      const isLeftHalf = relativeX < (rect.width / 2);
+
+      triggerVibrate(15);
+      if (isLeftHalf) {
+        if (state.toolbarExpanded) {
+          toggleToolbar();
+        }
+        toggleClaudeHud();
+      } else {
+        closeClaudeHud();
+        toggleToolbar();
+      }
     });
 
     btnExpandToolbar.addEventListener('click', (e) => {
       e.stopPropagation();
+      closeClaudeHud();
       toggleToolbar();
     });
     btnCollapseToolbar.addEventListener('click', (e) => {
@@ -2797,16 +2822,6 @@
       });
     }
 
-    // Tap on USB or Wi-Fi toggles Claude Code Retro HUD Dropdown from Pill
-    if (pillTransport) {
-      pillTransport.style.cursor = 'pointer';
-      pillTransport.title = 'Нажмите, чтобы открыть пиксельный монитор железа';
-      pillTransport.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleClaudeHud();
-      });
-    }
-
     const btnCloseHud = document.getElementById('btn-close-hud');
     if (btnCloseHud) {
       btnCloseHud.addEventListener('click', (e) => {
@@ -2819,7 +2834,7 @@
     document.addEventListener('pointerdown', (e) => {
       const hud = document.getElementById('claude-hud-dropdown');
       if (hud && !hud.classList.contains('hidden')) {
-        if (!hud.contains(e.target) && !pillTransport.contains(e.target)) {
+        if (!hud.contains(e.target) && !toolbarPill.contains(e.target)) {
           closeClaudeHud();
         }
       }

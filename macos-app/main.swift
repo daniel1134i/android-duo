@@ -21,6 +21,7 @@ final class ServerManager: ObservableObject {
     @Published var ramText: String = "6.1 / 8.0 GB"
     @Published var netSpeed: String = "0.0 MB/s"
     @Published var tempText: String = "36°C"
+    @Published var tabletTempText: String = "33°C"
     @Published var isMacCharging: Bool = true
     @Published var tabletBattery: Int? = nil
     @Published var isTabletCharging: Bool = false
@@ -428,8 +429,11 @@ final class ServerManager: ObservableObject {
                         self.ramText = "\(ramU) / \(ramT) GB"
                     }
                     if let net = hw["netSpeed"] as? String { self.netSpeed = net }
-                    if let temp = hw["tempDisplay"] as? String ?? hw["tempMac"] as? String {
+                    if let temp = hw["tempMac"] as? String ?? hw["tempDisplay"] as? String {
                         self.tempText = temp
+                    }
+                    if let tTemp = hw["tempTablet"] as? String, tTemp != "--" {
+                        self.tabletTempText = tTemp
                     }
                     if let macC = hw["macCharging"] as? Bool { self.isMacCharging = macC }
                     if let tabC = hw["tabletCharging"] as? Bool { self.isTabletCharging = tabC }
@@ -1281,7 +1285,7 @@ struct PixelHardwareHudView: View {
                         .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
                     Text("·")
                         .foregroundColor(.secondary)
-                    Text("Pad: \(server.tabletBattery != nil ? "33°C" : "--")")
+                    Text("Pad: \(server.tabletBattery != nil ? server.tabletTempText : "--")")
                         .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
                     Spacer()
                     Text(server.transport == "usb" ? "⚡USB" : "📶WiFi")
