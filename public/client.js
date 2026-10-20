@@ -202,14 +202,20 @@
     }, duration);
   }
 
-  function openClaudeHud() {
-    const modal = document.getElementById('claude-hud-modal');
-    if (modal) modal.classList.remove('hidden');
+  function toggleClaudeHud() {
+    const dropdown = document.getElementById('claude-hud-dropdown');
+    if (!dropdown) return;
+    if (dropdown.classList.contains('hidden')) {
+      if (state.toolbarExpanded) toggleToolbar();
+      dropdown.classList.remove('hidden');
+    } else {
+      dropdown.classList.add('hidden');
+    }
   }
 
   function closeClaudeHud() {
-    const modal = document.getElementById('claude-hud-modal');
-    if (modal) modal.classList.add('hidden');
+    const dropdown = document.getElementById('claude-hud-dropdown');
+    if (dropdown) dropdown.classList.add('hidden');
   }
 
   // ============================================================================
@@ -2791,30 +2797,33 @@
       });
     }
 
-    // Tap on USB or Wi-Fi shows Claude Code Retro HUD Modal on Tablet
+    // Tap on USB or Wi-Fi toggles Claude Code Retro HUD Dropdown from Pill
     if (pillTransport) {
       pillTransport.style.cursor = 'pointer';
       pillTransport.title = 'Нажмите, чтобы открыть пиксельный монитор железа';
       pillTransport.addEventListener('click', (e) => {
         e.stopPropagation();
-        openClaudeHud();
+        toggleClaudeHud();
       });
     }
 
     const btnCloseHud = document.getElementById('btn-close-hud');
-    const hudBackdrop = document.getElementById('claude-hud-backdrop');
     if (btnCloseHud) {
       btnCloseHud.addEventListener('click', (e) => {
         e.stopPropagation();
         closeClaudeHud();
       });
     }
-    if (hudBackdrop) {
-      hudBackdrop.addEventListener('click', (e) => {
-        e.stopPropagation();
-        closeClaudeHud();
-      });
-    }
+
+    // Tap outside to close HUD dropdown
+    document.addEventListener('pointerdown', (e) => {
+      const hud = document.getElementById('claude-hud-dropdown');
+      if (hud && !hud.classList.contains('hidden')) {
+        if (!hud.contains(e.target) && !pillTransport.contains(e.target)) {
+          closeClaudeHud();
+        }
+      }
+    });
 
     // Manual Reconnect Button
     btnReconnect.addEventListener('click', () => {

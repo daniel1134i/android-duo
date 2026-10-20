@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <meta name="apple-mobile-web-app-title" content="Android Duo">
   <title>Android Duo - macOS Touch Display</title>
-  <link rel="stylesheet" href="style.css?v=17">
+  <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
   <!-- Main Display Canvas -->
@@ -60,6 +60,72 @@
           <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
         </svg>
       </button>
+    </div>
+
+    <!-- Claude Code Retro Terminal HUD Dropdown Attached to Pill -->
+    <div id="claude-hud-dropdown" class="claude-hud-dropdown hidden">
+      <div class="claude-hud-box">
+        <!-- Header -->
+        <div class="hud-line hud-header">
+          <span class="hud-border">╭─</span>
+          <span class="hud-title">CLAUDE CODE // DUO-HUD</span>
+          <span class="hud-live">● LIVE</span>
+          <button class="hud-close-btn" id="btn-close-hud" title="Закрыть">[✕]</button>
+          <span class="hud-border">─╮</span>
+        </div>
+        
+        <!-- Metrics -->
+        <div class="hud-body">
+          <div class="hud-row">
+            <span class="hud-border">│</span>
+            <span class="hud-label">CPU</span>
+            <span class="hud-bar hud-cpu-bar" id="t-hud-cpu-bar">[████░░░░]</span>
+            <span class="hud-val" id="t-hud-cpu">--%</span>
+            <span class="hud-spacer"></span>
+            <span class="hud-sub">Apple M2</span>
+            <span class="hud-border">│</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-border">│</span>
+            <span class="hud-label">RAM</span>
+            <span class="hud-bar hud-ram-bar" id="t-hud-ram-bar">[██████░░]</span>
+            <span class="hud-val" id="t-hud-ram">-- / -- GB</span>
+            <span class="hud-spacer"></span>
+            <span class="hud-sub" id="t-hud-ram-pct">--%</span>
+            <span class="hud-border">│</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-border">│</span>
+            <span class="hud-label">NET</span>
+            <span class="hud-bar hud-net-bar" id="t-hud-net-bar">[██░░░░░░]</span>
+            <span class="hud-val" id="t-hud-net">-- MB/s</span>
+            <span class="hud-spacer"></span>
+            <span class="hud-sub hud-fps" id="t-hud-fps">-- FPS</span>
+            <span class="hud-border">│</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-border">│</span>
+            <span class="hud-label">TMP</span>
+            <span class="hud-val" id="t-hud-tmp">M2: --°C · Pad: --°C</span>
+            <span class="hud-spacer"></span>
+            <span class="hud-sub hud-transport" id="t-hud-transport">⚡USB</span>
+            <span class="hud-border">│</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-border">│</span>
+            <span class="hud-label">PWR</span>
+            <span class="hud-val" id="t-hud-pwr">Mac: --% · Pad: --%</span>
+            <span class="hud-spacer"></span>
+            <span class="hud-sub hud-ok">LIVE</span>
+            <span class="hud-border">│</span>
+          </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="hud-line hud-footer">
+          <span class="hud-border">╰──────────────────────────────────────╯</span>
+        </div>
+      </div>
     </div>
 
     <!-- Expanded Control Panel -->
@@ -364,75 +430,6 @@
     </div>
   </div>
 
-  <!-- Claude Code Retro Terminal HUD Modal on Tablet -->
-  <div id="claude-hud-modal" class="claude-hud-modal hidden">
-    <div class="claude-hud-backdrop" id="claude-hud-backdrop"></div>
-    <div class="claude-hud-container">
-      <div class="claude-hud-box">
-        <!-- Header -->
-        <div class="hud-line hud-header">
-          <span class="hud-border">╭─</span>
-          <span class="hud-title">CLAUDE CODE // DUO-HUD</span>
-          <span class="hud-live">● LIVE</span>
-          <button class="hud-close-btn" id="btn-close-hud" title="Закрыть">[✕]</button>
-          <span class="hud-border">─╮</span>
-        </div>
-        
-        <!-- Metrics -->
-        <div class="hud-body">
-          <div class="hud-row">
-            <span class="hud-border">│</span>
-            <span class="hud-label">CPU</span>
-            <span class="hud-bar hud-cpu-bar" id="t-hud-cpu-bar">[████░░░░]</span>
-            <span class="hud-val" id="t-hud-cpu">--%</span>
-            <span class="hud-spacer"></span>
-            <span class="hud-sub">Apple M2</span>
-            <span class="hud-border">│</span>
-          </div>
-          <div class="hud-row">
-            <span class="hud-border">│</span>
-            <span class="hud-label">RAM</span>
-            <span class="hud-bar hud-ram-bar" id="t-hud-ram-bar">[██████░░]</span>
-            <span class="hud-val" id="t-hud-ram">-- / -- GB</span>
-            <span class="hud-spacer"></span>
-            <span class="hud-sub" id="t-hud-ram-pct">--%</span>
-            <span class="hud-border">│</span>
-          </div>
-          <div class="hud-row">
-            <span class="hud-border">│</span>
-            <span class="hud-label">NET</span>
-            <span class="hud-bar hud-net-bar" id="t-hud-net-bar">[██░░░░░░]</span>
-            <span class="hud-val" id="t-hud-net">-- MB/s</span>
-            <span class="hud-spacer"></span>
-            <span class="hud-sub hud-fps" id="t-hud-fps">-- FPS</span>
-            <span class="hud-border">│</span>
-          </div>
-          <div class="hud-row">
-            <span class="hud-border">│</span>
-            <span class="hud-label">TMP</span>
-            <span class="hud-val" id="t-hud-tmp">M2: --°C · Pad: --°C</span>
-            <span class="hud-spacer"></span>
-            <span class="hud-sub hud-transport" id="t-hud-transport">⚡USB</span>
-            <span class="hud-border">│</span>
-          </div>
-          <div class="hud-row">
-            <span class="hud-border">│</span>
-            <span class="hud-label">PWR</span>
-            <span class="hud-val" id="t-hud-pwr">Mac: --% · Pad: --%</span>
-            <span class="hud-spacer"></span>
-            <span class="hud-sub hud-ok">LIVE</span>
-            <span class="hud-border">│</span>
-          </div>
-        </div>
-        
-        <!-- Footer -->
-        <div class="hud-line hud-footer">
-          <span class="hud-border">╰──────────────────────────────────────╯</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script src="client.js?v=17"></script>
+  <script src="client.js?v=18"></script>
 </body>
 </html>

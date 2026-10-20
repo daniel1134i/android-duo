@@ -1342,43 +1342,89 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* Claude Code Retro Terminal HUD Modal on Tablet */
-.claude-hud-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
-  animation: fadeIn 0.15s ease-out;
-}
-.claude-hud-modal.hidden {
-  display: none !important;
-}
-.claude-hud-backdrop {
+/* Claude Code Retro Terminal HUD Dropdown Attached to Pill */
+.claude-hud-dropdown {
   position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-.claude-hud-container {
-  position: relative;
-  z-index: 10001;
-  max-width: 95vw;
-}
-.claude-hud-box {
-  background: rgba(13, 17, 23, 0.98);
-  border: 1px solid rgba(224, 140, 72, 0.6);
-  border-radius: 12px;
-  padding: 12px 14px;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7), 0 0 20px rgba(224, 140, 72, 0.15);
-  color: #c9d1d9;
-  font-size: 12.5px;
-  line-height: 1.45;
+  z-index: 1002;
+  font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
   user-select: none;
   -webkit-user-select: none;
+  pointer-events: auto;
+}
+
+.claude-hud-dropdown.hidden {
+  display: none !important;
+}
+
+/* TOP POSITIONS: Dropdown appears BELOW the pill */
+.pos-top-center .claude-hud-dropdown {
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 8px;
+  animation: hudDropCenter 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pos-top-left .claude-hud-dropdown {
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  animation: hudDropSide 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pos-top-right .claude-hud-dropdown {
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  animation: hudDropSide 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* BOTTOM POSITIONS: Dropdown appears ABOVE the pill */
+.pos-bottom-center .claude-hud-dropdown {
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  animation: hudPopCenter 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pos-bottom-left .claude-hud-dropdown {
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  animation: hudPopSide 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pos-bottom-right .claude-hud-dropdown {
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 8px;
+  animation: hudPopSide 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes hudDropCenter {
+  from { opacity: 0; transform: translate(-50%, -8px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+@keyframes hudDropSide {
+  from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes hudPopCenter {
+  from { opacity: 0; transform: translate(-50%, 8px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+@keyframes hudPopSide {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.claude-hud-box {
+  background: rgba(13, 17, 23, 0.98);
+  border: 1px solid rgba(224, 140, 72, 0.65);
+  border-radius: 12px;
+  padding: 10px 13px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75), 0 0 18px rgba(224, 140, 72, 0.18);
+  color: #c9d1d9;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
 }
 .hud-line {
   display: flex;

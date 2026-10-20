@@ -185,7 +185,21 @@ let currentRamStats = { usedGB: '6.1', totalGB: '8.0', percent: 76 };
 let bytesSentAccumulator = 0;
 let lastThroughputTimestamp = Date.now();
 let currentThroughputMBs = '0.0 MB/s';
-let macSocEstimatedTemp = 38;
+let macSocRealTemp = 44;
+const MAC_TEMP_BIN = path.join(__dirname, '..', 'native', 'mac_temp');
+
+function updateMacTemp() {
+  if (fs.existsSync(MAC_TEMP_BIN)) {
+    exec(`"${MAC_TEMP_BIN}"`, { timeout: 1000 }, (err, stdout) => {
+      if (!err && stdout) {
+        const val = parseInt(stdout.trim(), 10);
+        if (!isNaN(val) && val > 20 && val < 115) {
+          macSocRealTemp = val;
+        }
+      }
+    });
+  }
+}
 
 function updateCpuUsage() {
   const cpus = os.cpus();
@@ -207,7 +221,6 @@ function updateCpuUsage() {
   lastCpuInfo = { totalBusy, total };
   if (totalDiff > 0) {
     currentCpuPercent = Math.max(1, Math.min(100, Math.round((busyDiff / totalDiff) * 100)));
-    macSocEstimatedTemp = Math.round(35 + (currentCpuPercent * 0.28));
   }
 }
 
@@ -316,6 +329,7 @@ function checkBatteryStatus(callback) {
 function broadcastBattery() {
   updateCpuUsage();
   updateRamStats();
+  updateMacTemp();
   updateThroughput();
 
   checkBatteryStatus((batt) => {
@@ -326,9 +340,9 @@ function broadcastBattery() {
       ramTotal: currentRamStats.totalGB,
       ramPercent: currentRamStats.percent,
       netSpeed: currentThroughputMBs,
-      tempMac: `${macSocEstimatedTemp}°C`,
-      tempTablet: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocEstimatedTemp - 3}°C`,
-      tempDisplay: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocEstimatedTemp}°C`,
+      tempMac: `${macSocRealTemp}°C`,
+      tempTablet: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocRealTemp - 5}°C`,
+      tempDisplay: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocRealTemp}°C`,
       macBatt: batt.mac.level,
       macCharging: batt.mac.charging,
       tabletBatt: batt.tablet.level,
@@ -407,9 +421,9 @@ const server = http.createServer((req, res) => {
         ramTotal: currentRamStats.totalGB,
         ramPercent: currentRamStats.percent,
         netSpeed: currentThroughputMBs,
-        tempMac: `${macSocEstimatedTemp}°C`,
-        tempTablet: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocEstimatedTemp - 3}°C`,
-        tempDisplay: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocEstimatedTemp}°C`,
+        tempMac: `${macSocRealTemp}°C`,
+        tempTablet: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocRealTemp - 5}°C`,
+        tempDisplay: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : `${macSocRealTemp}°C`,
         macBatt: currentBattery.mac.level,
         macCharging: currentBattery.mac.charging,
         tabletBatt: currentBattery.tablet.level,

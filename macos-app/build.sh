@@ -43,6 +43,10 @@ cp "$ROOT_DIR/server/index.js" "$APP_DIR/Contents/Resources/app/server/"
 cp -R "$ROOT_DIR/public/"* "$APP_DIR/Contents/Resources/app/public/"
 cp "$ROOT_DIR/native/mac_host" "$APP_DIR/Contents/Resources/app/native/"
 chmod +x "$APP_DIR/Contents/Resources/app/native/mac_host"
+if [ -f "$ROOT_DIR/native/mac_temp" ]; then
+    cp "$ROOT_DIR/native/mac_temp" "$APP_DIR/Contents/Resources/app/native/"
+    chmod +x "$APP_DIR/Contents/Resources/app/native/mac_temp"
+fi
 if [ -d "$ROOT_DIR/node_modules" ]; then
     cp -R "$ROOT_DIR/node_modules" "$APP_DIR/Contents/Resources/app/"
 fi
@@ -84,6 +88,9 @@ EOF
 echo "🔏 Signing application binary and bundle..."
 BUNDLE_ID="com.androidduo.app"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/Resources/app/native/mac_host"
+if [ -f "$APP_DIR/Contents/Resources/app/native/mac_temp" ]; then
+    codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/Resources/app/native/mac_temp"
+fi
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/MacOS/Android Duo"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR"
 
