@@ -1,4 +1,4 @@
-const CACHE_NAME = 'android-duo-v21';
+const CACHE_NAME = 'android-duo-v22';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',

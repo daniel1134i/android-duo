@@ -20,7 +20,8 @@ final class ServerManager: ObservableObject {
     @Published var cpuPercent: Int = 12
     @Published var ramText: String = "6.1 / 8.0 GB"
     @Published var netSpeed: String = "0.0 MB/s"
-    @Published var tempText: String = "36°C"
+    @Published var tempText: String = "45°C"
+    @Published var tabletCpuTempText: String = "43°C"
     @Published var tabletTempText: String = "33°C"
     @Published var isMacCharging: Bool = true
     @Published var tabletBattery: Int? = nil
@@ -408,11 +409,14 @@ final class ServerManager: ObservableObject {
                         self.ramText = "\(ramU) / \(ramT) GB"
                     }
                     if let net = hw["netSpeed"] as? String { self.netSpeed = net }
-                    if let temp = hw["tempMac"] as? String ?? hw["tempDisplay"] as? String {
+                    if let temp = hw["tempMac"] as? String {
                         self.tempText = temp
                     }
-                    if let tTemp = hw["tempTablet"] as? String, tTemp != "--" {
-                        self.tabletTempText = tTemp
+                    if let tCpu = hw["tempTabletCpu"] as? String, tCpu != "--" {
+                        self.tabletCpuTempText = tCpu
+                    }
+                    if let tBat = hw["tempTabletBatt"] as? String ?? hw["tempTablet"] as? String, tBat != "--" {
+                        self.tabletTempText = tBat
                     }
                     if let macC = hw["macCharging"] as? Bool { self.isMacCharging = macC }
                     if let tabC = hw["tabletCharging"] as? Bool { self.isTabletCharging = tabC }
@@ -1203,7 +1207,11 @@ struct PixelHardwareHudView: View {
                         .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
                     Text("·")
                         .foregroundColor(.secondary)
-                    Text("Pad: \(server.tabletBattery != nil ? server.tabletTempText : "--")")
+                    Text("Pad: \(server.tabletBattery != nil ? server.tabletCpuTempText : "--")")
+                        .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
+                    Text("·")
+                        .foregroundColor(.secondary)
+                    Text("Bat: \(server.tabletBattery != nil ? server.tabletTempText : "--")")
                         .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
                     Spacer()
                     Text(server.transport == "usb" ? "⚡USB" : "📶WiFi")

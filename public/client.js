@@ -1072,16 +1072,18 @@
     if (tNet && hw.netSpeed) {
       tNet.textContent = hw.netSpeed;
       const netNum = parseFloat(hw.netSpeed) || 0;
-      const netPct = Math.min(100, Math.round(netNum * 20));
+      const isMB = hw.netSpeed.includes('MB');
+      const netPct = isMB ? Math.min(100, Math.round(netNum * 15)) : Math.min(25, Math.max(1, Math.round(netNum / 40)));
       if (tNetBar) tNetBar.textContent = `[${pixelBar(netPct, 8)}]`;
       if (tFps) tFps.textContent = `${state.fps || 60} FPS`;
     }
     const tTmp = document.getElementById('t-hud-tmp');
     const tTrans = document.getElementById('t-hud-transport');
     if (tTmp) {
-      const macT = hw.tempMac || hw.tempDisplay || '45°C';
-      const padT = (hw.tempTablet && hw.tempTablet !== '--') ? hw.tempTablet : (hw.tabletBatt !== undefined ? '33°C' : '--');
-      tTmp.textContent = `M2: ${macT} · Pad: ${padT}`;
+      const macT = hw.tempMac || '45°C';
+      const padCpuT = hw.tempTabletCpu || (hw.tempTablet && hw.tempTablet !== '--' ? hw.tempTablet : '43°C');
+      const padBatT = hw.tempTabletBatt || (hw.tabletBatt !== undefined ? '33°C' : '--');
+      tTmp.textContent = `M2: ${macT} · Pad: ${padCpuT} · Bat: ${padBatT}`;
       if (tTrans) tTrans.textContent = state.transport === 'usb' ? '⚡USB' : '📶WiFi';
     }
     const tPwr = document.getElementById('t-hud-pwr');

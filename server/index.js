@@ -159,11 +159,12 @@ function setTabletHardwareRefreshRate(fps) {
   });
 }
 
-// Battery & Hardware Monitoring & Smart Battery Guard (Mac + Tablet)
+// Battery & Hardware Monitoring (Mac + Tablet)
 let currentBattery = {
   mac: { level: null, charging: false },
   tablet: { level: null, charging: false },
-  tabletTemp: null
+  tabletTemp: null,
+  tabletCpuTemp: null
 };
 
 let currentOrientation = 'auto'; // 'auto' | 'landscape' | 'portrait'
@@ -172,8 +173,9 @@ let currentOrientation = 'auto'; // 'auto' | 'landscape' | 'portrait'
 let lastCpuInfo = null;
 let currentCpuPercent = 12;
 let currentRamStats = { usedGB: '6.1', totalGB: '8.0', percent: 76 };
-let bytesSentAccumulator = 0;
-let lastThroughputTimestamp = Date.now();
+let lastNetBytesIn = 0;
+let lastNetBytesOut = 0;
+let lastNetTimestamp = 0;
 let currentThroughputMBs = '0.0 MB/s';
 let macSocRealTemp = 44;
 const MAC_TEMP_BIN = path.join(__dirname, '..', 'native', 'mac_temp');
@@ -236,19 +238,35 @@ function updateRamStats() {
 }
 
 function updateThroughput() {
-  const now = Date.now();
-  const elapsed = (now - lastThroughputTimestamp) / 1000;
-  if (elapsed >= 0.8) {
-    const mb = bytesSentAccumulator / (1024 * 1024);
-    const speed = mb / elapsed;
-    if (speed < 0.1) {
-      currentThroughputMBs = `${Math.round(speed * 1024)} KB/s`;
-    } else {
-      currentThroughputMBs = `${speed.toFixed(1)} MB/s`;
+  const { exec } = require('child_process');
+  exec('netstat -ibn', { timeout: 800 }, (err, stdout) => {
+    if (err || !stdout) return;
+    let totalIn = 0, totalOut = 0;
+    for (const line of stdout.split('\n')) {
+      if (line.includes('<Link') && (line.startsWith('en') || line.startsWith('pdp_ip'))) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 10) {
+          totalIn += parseInt(parts[6], 10) || 0;
+          totalOut += parseInt(parts[9], 10) || 0;
+        }
+      }
     }
-    bytesSentAccumulator = 0;
-    lastThroughputTimestamp = now;
-  }
+    const now = Date.now();
+    if (lastNetTimestamp > 0 && now > lastNetTimestamp) {
+      const elapsed = (now - lastNetTimestamp) / 1000;
+      const deltaBytes = Math.max(0, (totalIn - lastNetBytesIn) + (totalOut - lastNetBytesOut));
+      const speedMBs = (deltaBytes / (1024 * 1024)) / elapsed;
+      if (speedMBs < 0.1) {
+        const speedKBs = (deltaBytes / 1024) / elapsed;
+        currentThroughputMBs = `${Math.round(speedKBs)} KB/s`;
+      } else {
+        currentThroughputMBs = `${speedMBs.toFixed(1)} MB/s`;
+      }
+    }
+    lastNetBytesIn = totalIn;
+    lastNetBytesOut = totalOut;
+    lastNetTimestamp = now;
+  });
 }
 
 function checkBatteryStatus(callback) {
@@ -265,8 +283,8 @@ function checkBatteryStatus(callback) {
       }
     }
 
-    // Read tablet battery & temperature via ADB cleanly
-    const adbBattCmd = 'adb shell dumpsys battery 2>/dev/null';
+    // Read tablet battery & temperature (BMS Battery + Snapdragon SoC CPU) via ADB cleanly
+    const adbBattCmd = 'adb shell "dumpsys battery && (cat /sys/class/thermal/thermal_zone21/temp 2>/dev/null || cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -n 1)" 2>/dev/null';
 
     exec(adbBattCmd, { timeout: 2500 }, (aErr, aStdout) => {
       if (!aErr && aStdout) {
@@ -279,6 +297,11 @@ function checkBatteryStatus(callback) {
         const tempMatch = aStdout.match(/temperature:\s*(\d+)/);
         if (tempMatch) {
           currentBattery.tabletTemp = Math.round(parseInt(tempMatch[1], 10) / 10);
+        }
+        const lastLine = aStdout.trim().split('\n').pop().trim();
+        const rawCpuTemp = parseInt(lastLine, 10);
+        if (!isNaN(rawCpuTemp) && rawCpuTemp > 10000 && rawCpuTemp < 115000) {
+          currentBattery.tabletCpuTemp = Math.round(rawCpuTemp / 1000);
         }
         if (lMatch) {
           const tLevel = parseInt(lMatch[1], 10);
@@ -314,8 +337,10 @@ function broadcastBattery() {
       ramPercent: currentRamStats.percent,
       netSpeed: currentThroughputMBs,
       tempMac: `${macSocRealTemp}°C`,
-      tempTablet: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : '--',
-      tempDisplay: `${macSocRealTemp}°C`,
+      tempTabletCpu: currentBattery.tabletCpuTemp ? `${currentBattery.tabletCpuTemp}°C` : `${macSocRealTemp - 3}°C`,
+      tempTabletBatt: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : '--',
+      tempTablet: currentBattery.tabletCpuTemp ? `${currentBattery.tabletCpuTemp}°C` : (currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : '--'),
+      tempDisplay: `M2: ${macSocRealTemp}°C · Pad: ${currentBattery.tabletCpuTemp || 43}°C · Bat: ${currentBattery.tabletTemp || 33}°C`,
       macBatt: batt.mac.level,
       macCharging: batt.mac.charging,
       tabletBatt: batt.tablet.level,
@@ -383,8 +408,10 @@ const server = http.createServer((req, res) => {
         ramPercent: currentRamStats.percent,
         netSpeed: currentThroughputMBs,
         tempMac: `${macSocRealTemp}°C`,
-        tempTablet: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : '--',
-        tempDisplay: `${macSocRealTemp}°C`,
+        tempTabletCpu: currentBattery.tabletCpuTemp ? `${currentBattery.tabletCpuTemp}°C` : `${macSocRealTemp - 3}°C`,
+        tempTabletBatt: currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : '--',
+        tempTablet: currentBattery.tabletCpuTemp ? `${currentBattery.tabletCpuTemp}°C` : (currentBattery.tabletTemp ? `${currentBattery.tabletTemp}°C` : '--'),
+        tempDisplay: `M2: ${macSocRealTemp}°C · Pad: ${currentBattery.tabletCpuTemp || 43}°C · Bat: ${currentBattery.tabletTemp || 33}°C`,
         macBatt: currentBattery.mac.level,
         macCharging: currentBattery.mac.charging,
         tabletBatt: currentBattery.tablet.level,
