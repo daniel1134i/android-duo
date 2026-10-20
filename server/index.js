@@ -430,6 +430,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // REST API: Display Arrangement Position (Right / Left)
+  if (req.url.startsWith('/api/display/position')) {
+    const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const pos = urlObj.searchParams.get('pos') || 'right';
+    appConfig.displayPosition = pos;
+    saveConfig(appConfig);
+    sendToNative({ type: 'set_position', position: pos });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, position: pos }));
+    return;
+  }
+
   // REST API: Open Native HyperOS Battery Protection Settings
   if (req.url.startsWith('/api/battery/native-settings')) {
     const { exec } = require('child_process');

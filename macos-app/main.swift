@@ -30,6 +30,7 @@ final class ServerManager: ObservableObject {
     @Published var localIP: String = "127.0.0.1"
     @Published var hasScreenCapturePermission: Bool = CGPreflightScreenCaptureAccess()
     @Published var tabletLaunchTarget: String = UserDefaults.standard.string(forKey: "tabletLaunchTarget") ?? "native"
+    @Published var displayPosition: String = UserDefaults.standard.string(forKey: "displayPosition") ?? "right"
     
     private var serverProcess: Process?
     private var telemetryTimer: Timer?
@@ -245,6 +246,22 @@ final class ServerManager: ObservableObject {
                 self?.fetchTelemetry()
             }
         }.resume()
+    }
+
+    func setDisplayPosition(_ pos: String) {
+        displayPosition = pos
+        UserDefaults.standard.set(pos, forKey: "displayPosition")
+        guard let url = URL(string: "http://127.0.0.1:3000/api/display/position?pos=\(pos)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
+    func openDisplaySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Displays-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func launchTabletApp(targetOverride: String? = nil) {
@@ -1528,6 +1545,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             orientRootItem.submenu = orientSubmenu
             menu.addItem(orientRootItem)
 
+            let posSubmenu = NSMenu()
+            let rightItem = NSMenuItem(title: "👉 Справа от Mac (по умолчанию)", action: #selector(setDisplayPositionRightAction), keyEquivalent: "")
+            rightItem.target = self
+            rightItem.state = server.displayPosition == "right" ? .on : .off
+            posSubmenu.addItem(rightItem)
+
+            let leftItem = NSMenuItem(title: "👈 Слева от Mac", action: #selector(setDisplayPositionLeftAction), keyEquivalent: "")
+            leftItem.target = self
+            leftItem.state = server.displayPosition == "left" ? .on : .off
+            posSubmenu.addItem(leftItem)
+
+            posSubmenu.addItem(NSMenuItem.separator())
+
+            let arrangeItem = NSMenuItem(title: "🖥 Расстановка дисплеев в macOS...", action: #selector(openDisplaySettingsAction), keyEquivalent: "")
+            arrangeItem.target = self
+            posSubmenu.addItem(arrangeItem)
+
+            let posRootItem = NSMenuItem(title: "📍 Расположение планшета", action: nil, keyEquivalent: "")
+            posRootItem.submenu = posSubmenu
+            menu.addItem(posRootItem)
+
             let nativeBattItem = NSMenuItem(title: "📱 Настройки защиты батареи на планшете", action: #selector(openTabletBatterySettingsAction), keyEquivalent: "")
             nativeBattItem.target = self
             menu.addItem(nativeBattItem)
@@ -1691,6 +1729,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func setLaunchWebapkAction() { server.setTabletLaunchTarget("webapk"); refreshStatusMenu() }
     @objc private func sleepTabletAction() { server.sendPowerState("sleep") }
     @objc private func wakeTabletAction() { server.sendPowerState("wake") }
+    @objc private func setDisplayPositionRightAction() { server.setDisplayPosition("right"); refreshStatusMenu() }
+    @objc private func setDisplayPositionLeftAction() { server.setDisplayPosition("left"); refreshStatusMenu() }
+    @objc private func openDisplaySettingsAction() { server.openDisplaySettings() }
     @objc private func openTabletBatterySettingsAction() { server.openTabletBatterySettings() }
     @objc private func setOrientAutoAction() { server.setOrientation("auto"); refreshStatusMenu() }
     @objc private func setOrientLandscapeAction() { server.setOrientation("landscape"); refreshStatusMenu() }
