@@ -31,9 +31,8 @@
 - Unplug cable → Stream continues wirelessly over **📶 Wi-Fi 60 FPS**.
 - Replug cable → Upgrades back to **⚡ USB 90 FPS** within 1 second.
 
-## 🛡 Battery Guard & Power Management
+## 🔋 Battery Monitoring & Power Management
 - **Zero Sound Spam:** Silent battery polling avoids repetitive "Charging started" chimes on HyperOS / Android 15.
-- **Hardware 80% Protection Shortcut:** One click in the Mac dashboard/menu bar opens the native HyperOS battery protection activity on the tablet to hardware-limit charging to 80%.
 - **Remote Sleep / Wake:** Put the tablet screen to sleep or wake it up instantly from the macOS Menu Bar.
 
 ## 🔄 Portrait Mode & Live Hardware Monitor

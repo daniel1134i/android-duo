@@ -125,9 +125,8 @@ ls -lh "$OUTPUT_APK"
 
 # Copy to root project folder
 ROOT_APK="$SCRIPT_DIR/../Android Duo.apk"
-ROOT_APK_LOWER="$SCRIPT_DIR/../android-duo.apk"
 cp "$OUTPUT_APK" "$ROOT_APK"
-cp "$OUTPUT_APK" "$ROOT_APK_LOWER"
+rm -f "$SCRIPT_DIR/../android-duo.apk" "$OUTPUT_APK.idsig"
 echo "Copied APK to project root: $ROOT_APK"
 
 # Optional install flag

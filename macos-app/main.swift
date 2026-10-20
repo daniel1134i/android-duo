@@ -227,14 +227,6 @@ final class ServerManager: ObservableObject {
         URLSession.shared.dataTask(with: request).resume()
     }
 
-    func openTabletBatterySettings() {
-        guard let url = URL(string: "http://127.0.0.1:3000/api/battery/native-settings") else { return }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 2.0
-        URLSession.shared.dataTask(with: request).resume()
-    }
-
     func setOrientation(_ mode: String) {
         orientation = mode
         UserDefaults.standard.set(mode, forKey: "tabletOrientation")
@@ -971,32 +963,6 @@ struct DashboardView: View {
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
 
-                    // Native Battery Settings on Tablet
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "battery.100.bolt")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.green)
-                            Text("Питание и защита батареи планшета:")
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Button(action: {
-                                server.openTabletBatterySettings()
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "slider.horizontal.3")
-                                    Text("Настройки на планшете")
-                                }
-                                .font(.system(size: 11))
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
-                    .cornerRadius(10)
-
                     // Screen Orientation Settings
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
@@ -1568,10 +1534,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             posRootItem.submenu = posSubmenu
             menu.addItem(posRootItem)
 
-            let nativeBattItem = NSMenuItem(title: "📱 Настройки защиты батареи на планшете", action: #selector(openTabletBatterySettingsAction), keyEquivalent: "")
-            nativeBattItem.target = self
-            menu.addItem(nativeBattItem)
-            
             let sleepItem = NSMenuItem(title: "🌙 Погасить экран планшета", action: #selector(sleepTabletAction), keyEquivalent: "")
             sleepItem.target = self
             menu.addItem(sleepItem)
@@ -1734,7 +1696,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func setDisplayPositionRightAction() { server.setDisplayPosition("right"); refreshStatusMenu() }
     @objc private func setDisplayPositionLeftAction() { server.setDisplayPosition("left"); refreshStatusMenu() }
     @objc private func openDisplaySettingsAction() { server.openDisplaySettings() }
-    @objc private func openTabletBatterySettingsAction() { server.openTabletBatterySettings() }
     @objc private func setOrientAutoAction() { server.setOrientation("auto"); refreshStatusMenu() }
     @objc private func setOrientLandscapeAction() { server.setOrientation("landscape"); refreshStatusMenu() }
     @objc private func setOrientPortraitAction() { server.setOrientation("portrait"); refreshStatusMenu() }
