@@ -25,8 +25,6 @@ final class ServerManager: ObservableObject {
     @Published var isMacCharging: Bool = true
     @Published var tabletBattery: Int? = nil
     @Published var isTabletCharging: Bool = false
-    @Published var isBatteryGuardActive: Bool = false
-    @Published var isBatteryGuardEnabled: Bool = true
     @Published var macBattery: Int? = nil
     @Published var localIP: String = "127.0.0.1"
     @Published var hasScreenCapturePermission: Bool = CGPreflightScreenCaptureAccess()
@@ -227,20 +225,6 @@ final class ServerManager: ObservableObject {
         URLSession.shared.dataTask(with: request).resume()
     }
 
-    func toggleBatteryGuard() {
-        let newTarget = !isBatteryGuardEnabled
-        guard let url = URL(string: "http://127.0.0.1:3000/api/battery/guard?enabled=\(newTarget ? "true" : "false")") else { return }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 2.0
-        URLSession.shared.dataTask(with: request) { [weak self] _, _, _ in
-            DispatchQueue.main.async {
-                self?.isBatteryGuardEnabled = newTarget
-                self?.fetchTelemetry()
-            }
-        }.resume()
-    }
-
     func openTabletBatterySettings() {
         guard let url = URL(string: "http://127.0.0.1:3000/api/battery/native-settings") else { return }
         var request = URLRequest(url: url)
@@ -416,11 +400,6 @@ final class ServerManager: ObservableObject {
                         self.tabletBattery = tabInt
                         self.isTabletCharging = batt["tabletCharging"] as? Bool ?? false
                     }
-                }
-
-                if let bg = json["batteryGuard"] as? [String: Any] {
-                    self.isBatteryGuardActive = bg["active"] as? Bool ?? false
-                    self.isBatteryGuardEnabled = bg["enabled"] as? Bool ?? true
                 }
 
                 if let hw = json["hw"] as? [String: Any] {
@@ -802,17 +781,10 @@ struct DashboardView: View {
                             
                             if let batt = server.tabletBattery {
                                 HStack(spacing: 4) {
-                                    if server.isBatteryGuardActive {
-                                        Image(systemName: "shield.fill")
-                                            .foregroundColor(.blue)
-                                        Text("\(batt)% 🛡")
-                                            .font(.system(size: 12, weight: .semibold))
-                                    } else {
-                                        Image(systemName: server.isTabletCharging ? "battery.100.bolt" : "battery.75")
-                                            .foregroundColor(server.isTabletCharging ? .green : .primary)
-                                        Text("\(batt)%")
-                                            .font(.system(size: 12, weight: .medium))
-                                    }
+                                    Image(systemName: server.isTabletCharging ? "battery.100.bolt" : "battery.75")
+                                        .foregroundColor(server.isTabletCharging ? .green : .primary)
+                                    Text("\(batt)%")
+                                        .font(.system(size: 12, weight: .medium))
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
@@ -976,43 +948,27 @@ struct DashboardView: View {
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
 
-                    // Battery Guard Settings
+                    // Native Battery Settings on Tablet
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Image(systemName: "shield.lefthalf.filled")
+                            Image(systemName: "battery.100.bolt")
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.blue)
-                            Text("Защита аккумулятора планшета (80%):")
+                                .foregroundColor(.green)
+                            Text("Питание и защита батареи планшета:")
                                 .font(.system(size: 12, weight: .semibold))
                             Spacer()
-                            Toggle("", isOn: Binding(
-                                get: { server.isBatteryGuardEnabled },
-                                set: { _ in server.toggleBatteryGuard() }
-                            ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                        }
-                        
-                        Text(server.isBatteryGuardActive
-                            ? "🛡 Защита активна: уровень заряда достиг 80%."
-                            : (server.isBatteryGuardEnabled
-                                ? "💡 Мониторинг защиты батареи при постоянном подключении по кабелю."
-                                : "⚠️ Защита отключена."))
-                            .font(.system(size: 10.5))
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-
-                        Button(action: {
-                            server.openTabletBatterySettings()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "slider.horizontal.3")
-                                Text("Открыть защиту батареи на планшете")
+                            Button(action: {
+                                server.openTabletBatterySettings()
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "slider.horizontal.3")
+                                    Text("Настройки на планшете")
+                                }
+                                .font(.system(size: 11))
                             }
-                            .font(.system(size: 11))
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
                     }
                     .padding(12)
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
@@ -1258,7 +1214,7 @@ struct PixelHardwareHudView: View {
                 
                 // BATTERY ROW
                 let macIcon = server.isMacCharging ? "⚡" : ""
-                let tabIcon = server.isBatteryGuardActive ? "🛡" : (server.isTabletCharging ? "⚡" : "")
+                let tabIcon = server.isTabletCharging ? "⚡" : ""
                 HStack(spacing: 4) {
                     Text("│ PWR")
                         .foregroundColor(.secondary)
@@ -1566,12 +1522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             orientRootItem.submenu = orientSubmenu
             menu.addItem(orientRootItem)
 
-            let guardTitle = server.isBatteryGuardEnabled ? "🛡 Защита батареи планшета (80%): Вкл" : "🛡 Защита батареи планшета (80%): Выкл"
-            let guardItem = NSMenuItem(title: guardTitle, action: #selector(toggleBatteryGuardAction), keyEquivalent: "")
-            guardItem.target = self
-            guardItem.state = server.isBatteryGuardEnabled ? .on : .off
-            menu.addItem(guardItem)
-
             let nativeBattItem = NSMenuItem(title: "📱 Настройки защиты батареи на планшете", action: #selector(openTabletBatterySettingsAction), keyEquivalent: "")
             nativeBattItem.target = self
             menu.addItem(nativeBattItem)
@@ -1735,7 +1685,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func setLaunchWebapkAction() { server.setTabletLaunchTarget("webapk"); refreshStatusMenu() }
     @objc private func sleepTabletAction() { server.sendPowerState("sleep") }
     @objc private func wakeTabletAction() { server.sendPowerState("wake") }
-    @objc private func toggleBatteryGuardAction() { server.toggleBatteryGuard(); refreshStatusMenu() }
     @objc private func openTabletBatterySettingsAction() { server.openTabletBatterySettings() }
     @objc private func setOrientAutoAction() { server.setOrientation("auto"); refreshStatusMenu() }
     @objc private func setOrientLandscapeAction() { server.setOrientation("landscape"); refreshStatusMenu() }

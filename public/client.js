@@ -183,7 +183,6 @@
   const modShift = document.getElementById('mod-shift');
   const btnSoftKeyboard = document.getElementById('btn-soft-keyboard');
   const btnWakeLock = document.getElementById('btn-wakelock');
-  const btnBatteryGuard = document.getElementById('btn-battery-guard');
   const btnFullscreen = document.getElementById('btn-fullscreen');
   const btnReconnect = document.getElementById('btn-reconnect');
   const btnPwaInstall = document.getElementById('btn-pwa-install');
@@ -933,7 +932,7 @@
         break;
 
       case 'battery':
-        handleBatteryUpdate(msg.mac, msg.tablet, msg.guard || msg.batteryGuard, msg.hw);
+        handleBatteryUpdate(msg.mac, msg.tablet, msg.hw);
         break;
 
       case 'mac_state':
@@ -993,7 +992,7 @@
     dismissedKey: null
   };
 
-  function handleBatteryUpdate(mac, tablet, guard, hw) {
+  function handleBatteryUpdate(mac, tablet, hw) {
     if (mac) {
       if (mac.level !== null && mac.level !== undefined) batteryState.mac.level = mac.level;
       if (mac.charging !== undefined) batteryState.mac.charging = mac.charging;
@@ -1001,20 +1000,6 @@
     if (tablet) {
       if (tablet.level !== null && tablet.level !== undefined) batteryState.tablet.level = tablet.level;
       if (tablet.charging !== undefined) batteryState.tablet.charging = tablet.charging;
-    }
-    if (guard) {
-      if (guard.active !== undefined) batteryState.guardActive = !!guard.active;
-      if (guard.enabled !== undefined) batteryState.guardEnabled = !!guard.enabled;
-      if (btnBatteryGuard) {
-        btnBatteryGuard.classList.toggle('active', batteryState.guardEnabled);
-        if (batteryState.guardActive) {
-          btnBatteryGuard.title = 'Защита аккумулятора: АКТИВНА (зарядка приостановлена на 80%)';
-        } else {
-          btnBatteryGuard.title = batteryState.guardEnabled
-            ? 'Защита аккумулятора: ВКЛ (приостановит заряд при достижении 80%)'
-            : 'Защита аккумулятора: ВЫКЛ';
-        }
-      }
     }
 
     if (hw) {
@@ -1108,7 +1093,7 @@
   }
 
   function updateBatteryUI() {
-    const { mac, tablet, guardActive } = batteryState;
+    const { mac, tablet } = batteryState;
 
     // Update status pill battery label
     if (pillBattery) {
@@ -1121,13 +1106,9 @@
         if (mac.level <= 25 && !mac.charging) isLow = true;
       }
       if (tablet.level !== null) {
-        let chargingIcon = tablet.charging ? '⚡' : '';
-        if (guardActive) {
-          chargingIcon = ' 🛡';
-          pillBattery.title = 'Battery Guard активен: зарядка удерживается на 80% для защиты аккумулятора';
-        }
+        const chargingIcon = tablet.charging ? '⚡' : '';
         parts.push(`📱 ${tablet.level}%${chargingIcon}`);
-        if (tablet.level <= 25 && !tablet.charging && !guardActive) isLow = true;
+        if (tablet.level <= 25 && !tablet.charging) isLow = true;
       }
 
       if (parts.length > 0) {
@@ -1152,13 +1133,9 @@
       }
     }
     if (tabletBattVal) {
-      let tText = tablet.level !== null ? `${tablet.level}% ${tablet.charging ? '⚡' : ''}` : '--%';
-      if (guardActive) {
-        tText = `${tablet.level}% 🛡 (80% Guard)`;
-      }
-      tabletBattVal.textContent = tText;
+      tabletBattVal.textContent = tablet.level !== null ? `${tablet.level}% ${tablet.charging ? '⚡' : ''}` : '--%';
       if (badgeTablet) {
-        if (tablet.level !== null && tablet.level <= 25 && !tablet.charging && !guardActive) {
+        if (tablet.level !== null && tablet.level <= 25 && !tablet.charging) {
           badgeTablet.classList.add('low');
         } else {
           badgeTablet.classList.remove('low');
@@ -2782,22 +2759,6 @@
 
     // WakeLock Toggle
     btnWakeLock.addEventListener('click', toggleWakeLock);
-
-    // Battery Guard Toggle
-    if (btnBatteryGuard) {
-      btnBatteryGuard.addEventListener('click', () => {
-        batteryState.guardEnabled = !batteryState.guardEnabled;
-        btnBatteryGuard.classList.toggle('active', batteryState.guardEnabled);
-        sendJson({
-          type: 'toggle_battery_guard',
-          enabled: batteryState.guardEnabled
-        });
-        triggerVibrate(20);
-        showToast(batteryState.guardEnabled
-          ? '🛡 Защита батареи: ВКЛ (до 80%)'
-          : '⚡ Защита батареи: ВЫКЛ (зарядка до 100%)');
-      });
-    }
 
     // Fullscreen Toggles
     btnFullscreen.addEventListener('click', toggleFullscreen);
