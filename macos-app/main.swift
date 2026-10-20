@@ -147,6 +147,10 @@ final class ServerManager: ObservableObject {
     @discardableResult
     func checkScreenCapturePermission() -> Bool {
         let granted = CGPreflightScreenCaptureAccess()
+        // If already granted once, do not downgrade during sleep or lock-screen transient states
+        if self.hasScreenCapturePermission && !granted {
+            return true
+        }
         if self.hasScreenCapturePermission != granted {
             DispatchQueue.main.async {
                 let wasGranted = self.hasScreenCapturePermission
@@ -161,6 +165,7 @@ final class ServerManager: ObservableObject {
     }
     
     func requestScreenCapturePermission() {
+        if self.hasScreenCapturePermission { return }
         _ = CGRequestScreenCaptureAccess()
         
         // Trigger a lightweight ScreenCaptureKit query from this active GUI application
@@ -319,12 +324,10 @@ final class ServerManager: ObservableObject {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             
             DispatchQueue.main.async {
-                let localGranted = self.checkScreenCapturePermission()
+                _ = self.checkScreenCapturePermission()
                 if let serverGranted = json["screenCaptureGranted"] as? Bool {
                     if serverGranted && !self.hasScreenCapturePermission {
                         self.hasScreenCapturePermission = true
-                    } else if !serverGranted && !localGranted && self.hasScreenCapturePermission {
-                        self.hasScreenCapturePermission = false
                     }
                 }
                 let connectedCount = (json["connectedClients"] as? Int) ?? 0

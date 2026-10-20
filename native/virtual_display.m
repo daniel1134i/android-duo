@@ -33,7 +33,13 @@ static char s_currentPosition[16] = "right";
 CGDirectDisplayID create_virtual_display(uint32_t width, uint32_t height, double refreshRate, const char *name) {
     @autoreleasepool {
         if (s_activeVirtualDisplay != nil) {
-            return [s_activeVirtualDisplay displayID];
+            CGDirectDisplayID existingID = [s_activeVirtualDisplay displayID];
+            if (existingID != 0 && CGDisplayIsActive(existingID)) {
+                return existingID;
+            }
+            NSLog(@"[VirtualDisplay] Cached display %u is inactive or invalid after sleep/wake. Re-creating...", existingID);
+            s_activeVirtualDisplay = nil;
+            s_registeredModes = nil;
         }
 
         uint32_t primaryWidth = (width > 0) ? width : 1280;
@@ -48,6 +54,11 @@ CGDirectDisplayID create_virtual_display(uint32_t width, uint32_t height, double
         desc.productID = 0x1923;
         desc.vendorID = 0x1200;
         desc.queue = dispatch_get_main_queue();
+        desc.terminationHandler = ^(id device) {
+            NSLog(@"[VirtualDisplay] Display was terminated by WindowServer/sleep.");
+            s_activeVirtualDisplay = nil;
+            s_registeredModes = nil;
+        };
 
         CGVirtualDisplay *display = [[CGVirtualDisplay alloc] initWithDescriptor:desc];
         if (!display) {

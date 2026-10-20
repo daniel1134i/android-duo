@@ -61,11 +61,19 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         super.init()
     }
     
-    func start(preferredDisplayID: CGDirectDisplayID? = nil, fps: Int = 60, quality: Float = 0.90) async throws {
+    func start(preferredDisplayID: CGDirectDisplayID? = nil, fps: Int = 90, quality: Float = 0.90) async throws {
         self.targetFPS = fps
         self.quality = quality
         
         var display: SCDisplay? = nil
+        var targetPreferredID = preferredDisplayID
+        
+        if MacHostApp.enableVirtual {
+            let activeVID = MacHostApp.ensureVirtualDisplay()
+            if activeVID != 0 {
+                targetPreferredID = activeVID
+            }
+        }
         
         // Retry loop to ensure ScreenCaptureKit registers the newly created virtual display
         for attempt in 1...30 {
@@ -73,9 +81,9 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 self.availableDisplays = content.displays
                 let ids = content.displays.map { "\($0.displayID): \($0.width)x\($0.height)" }.joined(separator: ", ")
-                fputs("[mac_host] Attempt \(attempt) displays: [\(ids)] (looking for \(preferredDisplayID ?? 0))\n", stderr)
+                fputs("[mac_host] Attempt \(attempt) displays: [\(ids)] (looking for \(targetPreferredID ?? 0))\n", stderr)
                 
-                if let preferred = preferredDisplayID, let found = content.displays.first(where: { $0.displayID == preferred }) {
+                if let preferred = targetPreferredID, let found = content.displays.first(where: { $0.displayID == preferred }) {
                     fputs("[mac_host] Found preferred virtual display ID \(preferred) on attempt \(attempt)\n", stderr)
                     display = found
                     break
@@ -86,10 +94,6 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
                 }
             } catch {
                 fputs("[mac_host] Attempt \(attempt) SCShareableContent notice: \(error.localizedDescription). Waiting...\n", stderr)
-                if !CGPreflightScreenCaptureAccess() {
-                    fputs("[mac_host] TCC Error: Screen Recording permission is NOT active. Please grant permission in System Settings -> Privacy & Security -> Screen & System Audio Recording.\n", stderr)
-                    exit(2)
-                }
             }
             try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
         }
@@ -706,6 +710,7 @@ final class PowerStateObserver {
             "state": state
         ])
         if state == "wake" {
+            _ = MacHostApp.ensureVirtualDisplay()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.streamer.ensureCapturing(force: true)
             }
@@ -718,6 +723,18 @@ final class PowerStateObserver {
 @main
 struct MacHostApp {
     static var globalVirtualDisplayID: CGDirectDisplayID = 0
+    static var enableVirtual: Bool = true
+    static var virtualWidth: UInt32 = 1280
+    static var virtualHeight: UInt32 = 800
+    static var fps: Int = 90
+    static var quality: Float = 0.90
+
+    static func ensureVirtualDisplay() -> CGDirectDisplayID {
+        guard enableVirtual else { return 0 }
+        let dID = create_virtual_display(virtualWidth, virtualHeight, Double(fps), "Xiaomi Pad SE (Android Duo)")
+        globalVirtualDisplayID = dID
+        return dID
+    }
 
     static func main() {
         var fps = 90
@@ -735,7 +752,23 @@ struct MacHostApp {
             if args[i] == "--height", i + 1 < args.count, let val = UInt32(args[i + 1]) { virtualHeight = val }
         }
         
-        if !CGPreflightScreenCaptureAccess() {
+        MacHostApp.fps = fps
+        MacHostApp.quality = quality
+        MacHostApp.enableVirtual = enableVirtual
+        MacHostApp.virtualWidth = virtualWidth
+        MacHostApp.virtualHeight = virtualHeight
+        
+        var hasAccess = CGPreflightScreenCaptureAccess()
+        if !hasAccess {
+            for _ in 1...6 {
+                Thread.sleep(forTimeInterval: 0.5)
+                if CGPreflightScreenCaptureAccess() {
+                    hasAccess = true
+                    break
+                }
+            }
+        }
+        if !hasAccess {
             fputs("[mac_host] TCC Error: Screen Recording permission is NOT active. Please grant permission in System Settings -> Privacy & Security -> Screen & System Audio Recording.\n", stderr)
             exit(2)
         }
@@ -743,9 +776,8 @@ struct MacHostApp {
         let virtualDisplayID: CGDirectDisplayID
         if enableVirtual {
             fputs("[mac_host] Initializing native virtual display for Xiaomi Pad SE (\(virtualWidth)x\(virtualHeight) @ \(fps)Hz)...\n", stderr)
-            let dID = create_virtual_display(virtualWidth, virtualHeight, Double(fps), "Xiaomi Pad SE (Android Duo)")
+            let dID = ensureVirtualDisplay()
             virtualDisplayID = dID
-            MacHostApp.globalVirtualDisplayID = dID
             if dID != 0 {
                 fputs("[mac_host] Virtual Display active: ID=\(dID)\n", stderr)
             }
@@ -815,10 +847,16 @@ struct MacHostApp {
                                     let newFps = json["fps"] as? Int
                                     let newQ = (json["quality"] as? NSNumber)?.floatValue
                                     streamer.updateConfig(fps: newFps, quality: newQ)
+                                } else if type == "wake" {
+                                    fputs("[mac_host] Received wake command from server. Re-verifying virtual display...\n", stderr)
+                                    streamer.isPaused = false
+                                    _ = MacHostApp.ensureVirtualDisplay()
+                                    streamer.ensureCapturing(force: true)
                                 } else if type == "request_frame" || type == "request_keyframe" {
                                     streamer.forceNextFrame = true
-                                    if !streamer.isCapturing {
-                                        streamer.ensureCapturing()
+                                    if !streamer.isCapturing || streamer.isPaused {
+                                        streamer.isPaused = false
+                                        streamer.ensureCapturing(force: true)
                                     }
                                 } else if type == "select_display",
                                           let dId = (json["displayId"] as? NSNumber)?.uint32Value ?? (json["displayId"] as? UInt32) {

@@ -790,7 +790,7 @@ function startNativeHost() {
     const text = data.toString().trim();
     if (text) {
       console.log(text);
-      if (text.includes('Screen Recording permission is NOT active') || text.includes('TCC Error') || text.includes('TCC Notice')) {
+      if (!isMacAsleep && (text.includes('Screen Recording permission is NOT active') || text.includes('TCC Error') || text.includes('TCC Notice'))) {
         isScreenCaptureGranted = false;
       }
     }
@@ -803,7 +803,7 @@ function startNativeHost() {
 
   nativeProcess.on('exit', (code, signal) => {
     console.log(`[Native] mac_host exited with code ${code}, signal ${signal}`);
-    const isPermissionError = (code === 2);
+    const isPermissionError = (code === 2) && !isMacAsleep;
     if (isPermissionError) {
       isScreenCaptureGranted = false;
     }
@@ -1219,7 +1219,13 @@ function handleMacPowerStateChange(state) {
     setTimeout(broadcastWake, 500);
     setTimeout(broadcastWake, 1200);
 
-    // 4. Immediately request fresh frame from native capture engine
+    // 4. Ensure native capture engine is alive and request fresh frame
+    if (!nativeProcess) {
+      console.log('[Power] mac_host not running on wake. Starting native host immediately...');
+      startNativeHost();
+    } else {
+      sendToNative({ type: 'wake' });
+    }
     sendToNative({ type: 'request_frame' });
     setTimeout(() => sendToNative({ type: 'request_frame' }), 600);
     setTimeout(() => sendToNative({ type: 'request_frame' }), 1500);
