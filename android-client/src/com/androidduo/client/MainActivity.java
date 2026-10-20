@@ -352,6 +352,22 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        applyImmersiveSticky();
+        if (intent != null && intent.hasExtra("url")) {
+            String passedUrl = intent.getStringExtra("url");
+            if (passedUrl != null && !passedUrl.trim().isEmpty()) {
+                serverUrl = passedUrl.trim();
+                if (webView != null) {
+                    webView.loadUrl(serverUrl);
+                }
+            }
+        }
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         applyImmersiveSticky();

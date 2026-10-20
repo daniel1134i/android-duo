@@ -893,19 +893,21 @@ function startAdbWatcher() {
       type: 'usb_status',
       available: available,
       port: PORT,
-      localUrl: `http://localhost:${PORT}/?pwa=1`
+      localUrl: `http://127.0.0.1:${PORT}/?pwa=1`
     });
     const connPayload = available ? JSON.stringify({
       type: 'usb_connected',
       port: PORT,
-      url: `http://localhost:${PORT}/?pwa=1`,
-      host: '127.0.0.1'
+      url: `http://127.0.0.1:${PORT}/?pwa=1`,
+      host: '127.0.0.1',
+      force: true
     }) : null;
     const switchPayload = available ? JSON.stringify({
       type: 'switch_to_usb',
       port: PORT,
-      url: `http://localhost:${PORT}/?pwa=1`,
-      host: '127.0.0.1'
+      url: `http://127.0.0.1:${PORT}/?pwa=1`,
+      host: '127.0.0.1',
+      force: true
     }) : null;
 
     for (const client of wss.clients) {
@@ -966,13 +968,13 @@ function startAdbWatcher() {
       usbMigrateFallbackTimer = null;
     }
 
-    const usbUrl = `http://localhost:${PORT}/?pwa=1`;
+    const usbUrl = `http://127.0.0.1:${PORT}/?pwa=1`;
 
     if (!hasUsbClient && !hasWifiClient) {
       console.log(`[ADB] 🚀 No active clients, auto-launching tablet app: ${usbUrl}`);
       launchTabletApp(usbUrl);
     } else if (hasWifiClient && !hasUsbClient) {
-      // Wi-Fi client is active: allow 2.5s for seamless in-page migration or client redirect.
+      // Wi-Fi client is active: allow 1.5s for seamless in-page migration or client redirect.
       usbMigrateFallbackTimer = setTimeout(() => {
         usbMigrateFallbackTimer = null;
         let usbNow = false;
@@ -998,7 +1000,7 @@ function startAdbWatcher() {
           }
           launchTabletApp(usbUrl);
         }
-      }, 2500);
+      }, 1500);
     }
   }
 
@@ -1082,12 +1084,12 @@ function startAdbWatcher() {
         });
       });
     });
-  }, 1500);
+  }, 1000);
 }
 
 // App Launch Automation for Xiaomi Pad (Native App, Fully Kiosk, WebAPK, or Browser)
 function launchTabletApp(url, targetOverride) {
-  const targetUrl = url || `http://localhost:${PORT}/?pwa=1`;
+  const targetUrl = url || `http://127.0.0.1:${PORT}/?pwa=1`;
   const target = targetOverride || appConfig.tabletLaunchTarget || 'native';
   const { exec } = require('child_process');
 
@@ -1096,7 +1098,7 @@ function launchTabletApp(url, targetOverride) {
     exec('adb shell pm list packages com.androidduo.client 2>/dev/null', (err, stdout) => {
       if (!err && stdout && stdout.includes('com.androidduo.client')) {
         console.log('[ADB] ⚡ Launching native Android Duo client (com.androidduo.client)');
-        exec('adb shell am start -n com.androidduo.client/.MainActivity >/dev/null 2>&1', () => {});
+        exec(`adb shell am start -n com.androidduo.client/.MainActivity --es url "${targetUrl}" >/dev/null 2>&1`, () => {});
       } else {
         console.log('[ADB] ⚠️ Native client not found, falling back to WebAPK/Browser');
         launchFallbackTabletApp(targetUrl);

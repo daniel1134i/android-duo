@@ -386,6 +386,7 @@
   }
 
   function updateTransportUI(transport, host) {
+    const prevTransport = state.transport;
     state.transport = transport;
     if (pillTransport) {
       if (transport === 'usb') {
@@ -397,6 +398,11 @@
       }
     }
 
+    if (transport === 'usb' && prevTransport === 'wifi') {
+      state.targetFps = 90;
+      sendClientConfig();
+    }
+
     syncFpsSelectorUI();
   }
 
@@ -405,10 +411,11 @@
 
   function migrateToUsb(port, forceRedirect = false) {
     const targetPort = port || state.serverPort || 3000;
-    const isWifiOrigin = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
 
-    // If user opened page on Wi-Fi, DO NOT auto-hijack to USB unless user explicitly tapped "⚡ USB"
-    if (isWifiOrigin && !forceRedirect) {
+    // Check if user explicitly forced Wi-Fi mode via ?wifi=1 query or session flag
+    const isWifiForced = location.search.includes('wifi') || sessionStorage.getItem('force_wifi') === 'true';
+    if (isWifiForced && !forceRedirect) {
+      console.log('[DuoDisplay] Wi-Fi is explicitly locked by user; skipping auto-migration to USB.');
       return;
     }
 
@@ -418,20 +425,13 @@
     }
 
     const now = Date.now();
-    if (isMigratingToUsb && (now - lastUsbMigrationAttempt < 800)) {
+    if (isMigratingToUsb && (now - lastUsbMigrationAttempt < 600)) {
       return;
     }
     isMigratingToUsb = true;
     lastUsbMigrationAttempt = now;
 
     const isWifiOrigin = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
-
-    if (forceRedirect && isWifiOrigin) {
-      console.log(`[DuoDisplay] Explicit redirect to USB: http://localhost:${targetPort}/?pwa=1`);
-      isMigratingToUsb = false;
-      window.location.replace(`http://localhost:${targetPort}/?pwa=1`);
-      return;
-    }
 
     // Try loopback hosts: 127.0.0.1 FIRST (bypasses Android DNS & IPv6 delays), then localhost
     const candidatesToTry = ['127.0.0.1', 'localhost'];
@@ -441,8 +441,8 @@
         console.warn('[DuoDisplay] All USB WebSocket candidates failed or blocked.');
         isMigratingToUsb = false;
         if (isWifiOrigin) {
-          console.log(`[DuoDisplay] In-page migration blocked on Wi-Fi origin. Redirecting to http://localhost:${targetPort}/?pwa=1`);
-          window.location.replace(`http://localhost:${targetPort}/?pwa=1`);
+          console.log(`[DuoDisplay] In-page migration blocked on Wi-Fi origin. Redirecting to http://127.0.0.1:${targetPort}/?pwa=1`);
+          window.location.replace(`http://127.0.0.1:${targetPort}/?pwa=1`);
         }
         return;
       }
@@ -471,7 +471,7 @@
           try { candidateWs.close(); } catch (_) {}
           tryConnectCandidate(index + 1);
         }
-      }, 700);
+      }, 1000);
 
       candidateWs.onopen = () => {
         if (settled) return;
@@ -560,14 +560,14 @@
         }).then(data => {
           if (data && (data.adbReverseActive || data.adbConnected || data.port)) {
             console.log('[DuoDisplay] USB tunnel reachable via probe! Triggering migration to USB...');
-            migrateToUsb(port);
+            migrateToUsb(port, true);
           }
         }).catch(() => {
           clearTimeout(tId);
         });
       }
     }
-  }, 1200);
+  }, 1000);
 
   function initWebSocket(preferredHost) {
     if (state.ws && (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING)) {
@@ -801,7 +801,7 @@
       case 'usb_status':
         if (msg.available) {
           console.log('[DuoDisplay] Server notified USB reverse tunnel is ready (usb_status). Migrating to USB...');
-          migrateToUsb(msg.port || state.serverPort);
+          migrateToUsb(msg.port || state.serverPort, true);
         } else {
           console.log('[DuoDisplay] Server notified USB tunnel unavailable (usb_status).');
         }
@@ -809,12 +809,12 @@
 
       case 'usb_connected':
         console.log('[DuoDisplay] Server notified USB reverse tunnel is ready (usb_connected). Migrating to USB...');
-        migrateToUsb(msg.port || state.serverPort);
+        migrateToUsb(msg.port || state.serverPort, true);
         break;
 
       case 'switch_to_usb':
         console.log('[DuoDisplay] Server commanded immediate switch to USB (switch_to_usb).');
-        migrateToUsb(msg.port || state.serverPort, !!msg.force);
+        migrateToUsb(msg.port || state.serverPort, true);
         break;
 
       case 'pong':
@@ -828,7 +828,7 @@
           const isCurrentUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
           if (!isCurrentUsb) {
             console.log('[DuoDisplay] Pong indicated USB available while on Wi-Fi. Migrating...');
-            migrateToUsb(state.serverPort);
+            migrateToUsb(state.serverPort, true);
           }
         }
         break;
@@ -854,7 +854,7 @@
         const isUsbCurrent = state.activeHost && (state.activeHost.startsWith('127.0.0.1') || state.activeHost.startsWith('localhost'));
         if (!isWifiForced && (msg.usbAvailable || msg.adbReverseActive) && !isUsbCurrent) {
           console.log('[DuoDisplay] USB reverse tunnel detected on init. Migrating to USB...');
-          migrateToUsb(msg.port || state.serverPort);
+          migrateToUsb(msg.port || state.serverPort, true);
           return;
         }
         if (msg.brightness !== undefined) {
