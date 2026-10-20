@@ -94,14 +94,14 @@ npm install
 #### Вариант А. Через готовый скрипт (Рекомендуется)
 Автоматически проверяет сборку, настраивает ADB при подключенном кабеле и запускает сервер:
 ```bash
-cd "/Users/daniel/Documents/android duo"
+cd "/путь/к/папке/android duo"
 ./start.sh
 ```
 > 💡 **Совет для macOS**: Вы также можете просто дважды кликнуть по файлу `start.command` прямо в Finder!
 
 #### Вариант Б. Через npm / node
 ```bash
-cd "/Users/daniel/Documents/android duo"
+cd "/путь/к/папке/android duo"
 npm start
 ```
 *(или напрямую `node server/index.js`)*

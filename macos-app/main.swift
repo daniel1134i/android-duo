@@ -36,13 +36,18 @@ final class ServerManager: ObservableObject {
            FileManager.default.fileExists(atPath: "\(configuredDir)/server/index.js") {
             self.projectDir = configuredDir
         } else {
-            let defaultPath = "/Users/daniel/Documents/android duo"
-            if FileManager.default.fileExists(atPath: "\(defaultPath)/server/index.js") {
-                self.projectDir = defaultPath
+            let currentDir = FileManager.default.currentDirectoryPath
+            let bundleParent = (Bundle.main.bundlePath as NSString).deletingLastPathComponent
+            let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("android duo").path ?? ""
+            
+            if FileManager.default.fileExists(atPath: "\(currentDir)/server/index.js") {
+                self.projectDir = currentDir
+            } else if FileManager.default.fileExists(atPath: "\(bundleParent)/server/index.js") {
+                self.projectDir = bundleParent
+            } else if FileManager.default.fileExists(atPath: "\(documentsDir)/server/index.js") {
+                self.projectDir = documentsDir
             } else {
-                let bundlePath = Bundle.main.bundlePath
-                let parentDir = (bundlePath as NSString).deletingLastPathComponent
-                self.projectDir = parentDir
+                self.projectDir = bundleParent
             }
         }
     }

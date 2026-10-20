@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "run": "./start.sh",
-    "build:native": "clang -fobjc-arc -c native/virtual_display.m -o native/virtual_display.o && swiftc -O -parse-as-library -import-objc-header native/virtual_display.h native/mac_host.swift native/virtual_display.o -o native/mac_host && codesign --force -s - --identifier com.daniel.androidduo -r='designated => identifier \"com.daniel.androidduo\"' native/mac_host",
+    "build:native": "clang -fobjc-arc -c native/virtual_display.m -o native/virtual_display.o && swiftc -O -parse-as-library -import-objc-header native/virtual_display.h native/mac_host.swift native/virtual_display.o -o native/mac_host && codesign --force -s - --identifier com.androidduo.app -r='designated => identifier \"com.androidduo.app\"' native/mac_host",
     "build:app": "bash macos-app/build.sh",
     "build:dmg": "bash macos-app/build-dmg.sh",
     "app": "open 'Android Duo.app'",

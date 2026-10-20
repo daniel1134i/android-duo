@@ -59,7 +59,7 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.daniel.androidduo</string>
+    <string>com.androidduo.app</string>
     <key>CFBundleName</key>
     <string>Android Duo</string>
     <key>CFBundleDisplayName</key>
@@ -82,7 +82,7 @@ EOF
 
 # 7. Ad-hoc codesign inner and outer bundles with stable designated requirement
 echo "🔏 Signing application binary and bundle..."
-BUNDLE_ID="com.daniel.androidduo"
+BUNDLE_ID="com.androidduo.app"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/Resources/app/native/mac_host"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/MacOS/Android Duo"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR"
