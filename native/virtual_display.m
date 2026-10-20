@@ -108,10 +108,10 @@ CGDirectDisplayID create_virtual_display(uint32_t width, uint32_t height, double
         if (CGBeginDisplayConfiguration(&configRef) == kCGErrorSuccess) {
             CGRect mainBounds = CGDisplayBounds(CGMainDisplayID());
             int32_t originX = (int32_t)(mainBounds.origin.x + mainBounds.size.width);
-            int32_t originY = (int32_t)mainBounds.origin.y;
+            int32_t originY = (int32_t)(mainBounds.origin.y + (mainBounds.size.height - primaryHeight));
             CGConfigureDisplayOrigin(configRef, display.displayID, originX, originY);
             CGCompleteDisplayConfiguration(configRef, kCGConfigurePermanently);
-            NSLog(@"[VirtualDisplay] Auto-placed display %u to the RIGHT of main display at (%d, %d) with top alignment",
+            NSLog(@"[VirtualDisplay] Auto-placed display %u to the RIGHT of main display at (%d, %d) with bottom alignment",
                   display.displayID, originX, originY);
         }
 
@@ -137,7 +137,7 @@ BOOL set_virtual_display_position(const char *position) {
         CGRect mainBounds = CGDisplayBounds(CGMainDisplayID());
         CGRect myBounds = CGDisplayBounds(dID);
         int32_t originX = 0;
-        int32_t originY = (int32_t)mainBounds.origin.y;
+        int32_t originY = (int32_t)(mainBounds.origin.y + (mainBounds.size.height - myBounds.size.height));
 
         if (strcmp(s_currentPosition, "left") == 0) {
             originX = (int32_t)(mainBounds.origin.x - myBounds.size.width);

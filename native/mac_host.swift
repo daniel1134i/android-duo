@@ -37,59 +37,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
     var isCapturing = false
     var isPaused = false
     var availableDisplays: [SCDisplay] = []
-    
-    private var cachedCursorCI: CIImage?
-    private var cachedCursorHotSpot: CGPoint = CGPoint(x: 4, y: 4)
-    private var cachedCursorSize: CGSize = CGSize(width: 28, height: 40)
     private var lastMousePos: CGPoint = .zero
-    
-    private func getCursorCI() -> (CIImage, CGPoint, CGSize)? {
-        if let cached = cachedCursorCI {
-            return (cached, cachedCursorHotSpot, cachedCursorSize)
-        }
-        
-        let width = 32
-        let height = 32
-        let cs = CGColorSpaceCreateDeviceRGB()
-        guard let ctx = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width * 4,
-            space: cs,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            return nil
-        }
-        
-        // Native macOS vector cursor geometry (tip at 1, 31 in bottom-left CIImage coordinates)
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: 1, y: 31))
-        path.addLine(to: CGPoint(x: 1, y: 10))
-        path.addLine(to: CGPoint(x: 6, y: 14))
-        path.addLine(to: CGPoint(x: 10, y: 5))
-        path.addLine(to: CGPoint(x: 13, y: 6))
-        path.addLine(to: CGPoint(x: 9, y: 15))
-        path.addLine(to: CGPoint(x: 16, y: 15))
-        path.closeSubpath()
-        
-        ctx.addPath(path)
-        ctx.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0))
-        ctx.fillPath()
-        
-        ctx.addPath(path)
-        ctx.setStrokeColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0))
-        ctx.setLineWidth(1.5)
-        ctx.strokePath()
-        
-        guard let cgImg = ctx.makeImage() else { return nil }
-        let ci = CIImage(cgImage: cgImg)
-        self.cachedCursorCI = ci
-        self.cachedCursorHotSpot = CGPoint(x: 1, y: 31)
-        self.cachedCursorSize = CGSize(width: width, height: height)
-        return (ci, self.cachedCursorHotSpot, self.cachedCursorSize)
-    }
     
     func writePacket(_ packet: Data) {
         stdoutLock.lock()
@@ -356,27 +304,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         defer { encodeLock.unlock() }
         
         autoreleasepool {
-            var ciImage = CIImage(cvPixelBuffer: imageBuffer)
-            
-            // Composite macOS hardware cursor onto virtual display frames
-            if isMouseOnThisDisplay, let (cursorCI, hotSpot, _) = getCursorCI() {
-                let bufW = CGFloat(CVPixelBufferGetWidth(imageBuffer))
-                let bufH = CGFloat(CVPixelBufferGetHeight(imageBuffer))
-                let scaleX = dBounds.size.width > 0 ? (bufW / dBounds.size.width) : 1.0
-                let scaleY = dBounds.size.height > 0 ? (bufH / dBounds.size.height) : 1.0
-                
-                let localX = (currentMouseLoc.x - dBounds.origin.x) * scaleX
-                let localY = (currentMouseLoc.y - dBounds.origin.y) * scaleY
-                
-                let scaledCursor = (scaleX != 1.0 || scaleY != 1.0) ?
-                    cursorCI.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY)) : cursorCI
-                let cursorX = localX - (hotSpot.x * scaleX)
-                let cursorY = (bufH - localY) - (hotSpot.y * scaleY)
-                
-                let placedCursor = scaledCursor.transformed(by: CGAffineTransform(translationX: cursorX, y: cursorY))
-                ciImage = placedCursor.composited(over: ciImage)
-            }
-            
+            let ciImage = CIImage(cvPixelBuffer: imageBuffer)
             let opts: [CIImageRepresentationOption: Any] = [
                 CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): self.quality
             ]

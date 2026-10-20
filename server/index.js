@@ -936,7 +936,6 @@ function broadcastJpegFrame(jpegBuffer) {
     return;
   }
   lastJpegFrame = jpegBuffer;
-  bytesSentAccumulator += jpegBuffer.length;
 
   // WebSockets: Zero-latency drop-late-frames strategy (32KB prevents bufferbloat & eliminates ping spikes)
   for (const client of wss.clients) {
