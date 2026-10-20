@@ -8,3 +8,4 @@ Android Duo.app
 *.dmg
 AppIcon.icns
 android-client/build/
+backups/

@@ -123,6 +123,13 @@ echo "=== Build Complete ==="
 echo "Output: $OUTPUT_APK"
 ls -lh "$OUTPUT_APK"
 
+# Copy to root project folder
+ROOT_APK="$SCRIPT_DIR/../Android Duo.apk"
+ROOT_APK_LOWER="$SCRIPT_DIR/../android-duo.apk"
+cp "$OUTPUT_APK" "$ROOT_APK"
+cp "$OUTPUT_APK" "$ROOT_APK_LOWER"
+echo "Copied APK to project root: $ROOT_APK"
+
 # Optional install flag
 if [[ "${1:-}" == "--install" || "${1:-}" == "-i" ]]; then
     echo "Installing to connected device via adb..."
