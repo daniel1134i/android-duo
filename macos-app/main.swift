@@ -1051,44 +1051,6 @@ struct DashboardView: View {
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
 
-                    // Real-time Hardware Monitor
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Image(systemName: "cpu")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.green)
-                            Text("Монитор железа (в реальном времени):")
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(Color.green)
-                                    .frame(width: 6, height: 6)
-                                Text("LIVE")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(.green)
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.12))
-                            .cornerRadius(8)
-                        }
-                        
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                            HwStatBox(label: "ЦП M2", value: "\(server.cpuPercent)%")
-                            HwStatBox(label: "Память", value: server.ramText)
-                            HwStatBox(label: "Сеть", value: server.netSpeed)
-                            HwStatBox(label: "Темп.", value: server.tempText)
-                            HwStatBox(label: "MacBook", value: server.macBattery != nil ? "\(server.macBattery!)%" : "--%")
-                            HwStatBox(label: "Планшет", value: server.tabletBattery != nil ? "\(server.tabletBattery!)%" : "--%")
-                        }
-
-                        PixelHardwareHudView(isEmbedded: true)
-                            .padding(.top, 4)
-                    }
-                    .padding(12)
-                    .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
-                    .cornerRadius(10)
                 }
                 .padding(20)
             }
@@ -1206,7 +1168,7 @@ struct PixelHardwareHudView: View {
             HStack(spacing: 5) {
                 Text("╭─")
                     .foregroundColor(Color(red: 0.88, green: 0.55, blue: 0.28))
-                Text("CLAUDE CODE // DUO-HUD")
+                Text("DUO-HUD")
                     .font(.system(size: 10, weight: .black, design: .monospaced))
                     .foregroundColor(Color(red: 0.98, green: 0.65, blue: 0.35))
                 
