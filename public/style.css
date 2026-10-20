@@ -706,6 +706,18 @@ html, body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
+.segment-btn:disabled,
+.segment-btn.disabled {
+  opacity: 0.35 !important;
+  cursor: not-allowed !important;
+  filter: grayscale(1) !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: none !important;
+  transform: none !important;
+  pointer-events: auto !important;
+}
+
 /* --------------------------------------------------------------------------
    Display Dropdown Select
    -------------------------------------------------------------------------- */

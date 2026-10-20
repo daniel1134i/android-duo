@@ -331,8 +331,61 @@
     return list;
   }
 
+  function syncFpsSelectorUI() {
+    const selector = document.getElementById('fps-selector');
+    if (!selector) return;
+
+    // Detect transport: if state.transport is set, respect it strictly!
+    let isUsb = false;
+    if (state.transport === 'usb') {
+      isUsb = true;
+    } else if (state.transport === 'wifi') {
+      isUsb = false;
+    } else {
+      isUsb = !!(state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1')));
+    }
+    const btn90 = selector.querySelector('[data-fps="90"]');
+
+    if (!isUsb) {
+      // Wi-Fi Mode: strictly lock out 90 FPS
+      if (btn90) {
+        btn90.disabled = true;
+        btn90.classList.add('disabled');
+        btn90.classList.remove('active');
+        btn90.setAttribute('title', '90 FPS доступен только при подключении по USB');
+        btn90.style.opacity = '0.35';
+        btn90.style.pointerEvents = 'none';
+        btn90.style.cursor = 'not-allowed';
+        btn90.innerHTML = '⚡ 90 Hz <span style="font-size:9px;opacity:0.8;display:block;line-height:1">(Только USB)</span>';
+      }
+      if (state.targetFps > 60) {
+        state.targetFps = 60;
+        sendClientConfig();
+      }
+    } else {
+      // USB Mode: unlock 90 FPS
+      if (btn90) {
+        btn90.disabled = false;
+        btn90.classList.remove('disabled');
+        btn90.setAttribute('title', 'Максимальная плавность (90 Гц)');
+        btn90.style.opacity = '1';
+        btn90.style.pointerEvents = 'auto';
+        btn90.style.cursor = 'pointer';
+        btn90.innerHTML = '⚡ 90 Hz';
+      }
+    }
+
+    selector.querySelectorAll('.segment-btn').forEach(b => {
+      const fpsVal = parseInt(b.getAttribute('data-fps'), 10);
+      b.classList.toggle('active', fpsVal === state.targetFps);
+    });
+
+    if (pillFps) {
+      pillFps.textContent = `${state.targetFps} FPS`;
+    }
+  }
+
   function updateTransportUI(transport, host) {
-    const prevTransport = state.transport;
     state.transport = transport;
     if (pillTransport) {
       if (transport === 'usb') {
@@ -344,41 +397,7 @@
       }
     }
 
-    // Adaptive Transport FPS & Refresh Rate:
-    // USB: maximum 90 FPS / 90 Hz
-    // Wi-Fi: maximum 60 FPS / 60 Hz to avoid latency and packet congestion
-    const fps90Btn = fpsSelector ? fpsSelector.querySelector('[data-fps="90"]') : null;
-    if (transport === 'wifi') {
-      if (fps90Btn) {
-        fps90Btn.style.opacity = '0.4';
-        fps90Btn.title = '90 FPS доступен только при подключении по USB';
-      }
-      if (state.targetFps > 60) {
-        state.targetFps = 60;
-        if (fpsSelector) {
-          fpsSelector.querySelectorAll('.segment-btn').forEach(b => {
-            b.classList.toggle('active', b.getAttribute('data-fps') === '60');
-          });
-        }
-        if (pillFps) pillFps.textContent = '60 FPS';
-        sendClientConfig();
-      }
-    } else if (transport === 'usb') {
-      if (fps90Btn) {
-        fps90Btn.style.opacity = '1';
-        fps90Btn.title = 'Максимальная плавность (90 Гц)';
-      }
-      if (prevTransport === 'wifi' && state.targetFps === 60) {
-        state.targetFps = 90;
-        if (fpsSelector) {
-          fpsSelector.querySelectorAll('.segment-btn').forEach(b => {
-            b.classList.toggle('active', b.getAttribute('data-fps') === '90');
-          });
-        }
-        if (pillFps) pillFps.textContent = '90 FPS';
-        sendClientConfig();
-      }
-    }
+    syncFpsSelectorUI();
   }
 
   let isMigratingToUsb = false;
@@ -386,6 +405,13 @@
 
   function migrateToUsb(port, forceRedirect = false) {
     const targetPort = port || state.serverPort || 3000;
+    const isWifiOrigin = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+
+    // If user opened page on Wi-Fi, DO NOT auto-hijack to USB unless user explicitly tapped "⚡ USB"
+    if (isWifiOrigin && !forceRedirect) {
+      return;
+    }
+
     const isCurrentHostUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
     if (state.connected && isCurrentHostUsb) {
       return; // Already streaming via USB
@@ -819,9 +845,14 @@
         }
         updateCandidateHosts();
 
-        // If server informs USB reverse tunnel is active and client is currently on Wi-Fi, migrate immediately!
+        if (msg.isUsbClient !== undefined) {
+          updateTransportUI(msg.isUsbClient ? 'usb' : 'wifi', state.activeHost);
+        }
+
+        // If server informs USB reverse tunnel is active and client is currently on Wi-Fi, migrate to USB (unless user explicitly requested Wi-Fi via ?wifi=1)
+        const isWifiForced = location.search.includes('wifi') || sessionStorage.getItem('force_wifi') === 'true';
         const isUsbCurrent = state.activeHost && (state.activeHost.startsWith('127.0.0.1') || state.activeHost.startsWith('localhost'));
-        if ((msg.usbAvailable || msg.adbReverseActive) && !isUsbCurrent) {
+        if (!isWifiForced && (msg.usbAvailable || msg.adbReverseActive) && !isUsbCurrent) {
           console.log('[DuoDisplay] USB reverse tunnel detected on init. Migrating to USB...');
           migrateToUsb(msg.port || state.serverPort);
           return;
@@ -2180,6 +2211,7 @@
     if (state.toolbarExpanded) {
       floatingToolbar.classList.remove('toolbar-collapsed');
       floatingToolbar.classList.add('toolbar-expanded');
+      syncFpsSelectorUI();
     } else {
       floatingToolbar.classList.remove('toolbar-expanded');
       floatingToolbar.classList.add('toolbar-collapsed');
@@ -2444,8 +2476,16 @@
       const btn = e.target.closest('.segment-btn');
       if (!btn) return;
       const chosenFps = parseInt(btn.getAttribute('data-fps'), 10);
-      if (state.transport === 'wifi' && chosenFps > 60) {
-        showToast('⚠️ 90 FPS доступен только по кабелю USB (по Wi-Fi максимум 60 FPS)');
+      let isUsb = false;
+      if (state.transport === 'usb') {
+        isUsb = true;
+      } else if (state.transport === 'wifi') {
+        isUsb = false;
+      } else {
+        isUsb = !!(state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1')));
+      }
+      if (!isUsb && chosenFps > 60) {
+        showToast('⚠️ 90 FPS заблокирован: доступен только по кабелю USB');
         return;
       }
       fpsSelector.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
@@ -2453,6 +2493,7 @@
       state.targetFps = chosenFps;
       sendClientConfig();
       showToast(`Частота кадров: ${state.targetFps} FPS`);
+      syncFpsSelectorUI();
     });
 
     // Scaling Mode (Fit vs Fill)
