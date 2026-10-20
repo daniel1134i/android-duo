@@ -53,7 +53,9 @@ if command -v adb >/dev/null 2>&1; then
         adb shell settings put global stay_on_while_plugged_in 3 >/dev/null 2>&1
         adb shell svc power stayon usb >/dev/null 2>&1
         adb shell settings put global policy_control immersive.full=* >/dev/null 2>&1
-        echo "🚀 Directing tablet browser to USB tunnel (http://127.0.0.1:3000/?pwa=1)..."
+        echo "🚀 Directing tablet to Android Duo (http://127.0.0.1:3000/?pwa=1)..."
+        adb shell am start -n com.androidduo.client/.MainActivity >/dev/null 2>&1 || \
+        adb shell am start -n de.ozerov.fully/.MainActivity >/dev/null 2>&1 || \
         adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d "http://127.0.0.1:3000/?pwa=1" >/dev/null 2>&1 || \
         adb shell am start -a android.intent.action.VIEW -d "http://127.0.0.1:3000/?pwa=1" >/dev/null 2>&1
         (sleep 1; adb shell input keyevent 141 >/dev/null 2>&1) &

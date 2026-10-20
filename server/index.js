@@ -9,6 +9,28 @@ const qrcode = require('qrcode-terminal');
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const NATIVE_BIN = path.join(__dirname, '..', 'native', 'mac_host');
+const CONFIG_FILE = path.join(os.homedir(), '.android_duo_config.json');
+
+function loadConfig() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[Config] Failed to load config:', e.message);
+  }
+  return { tabletLaunchTarget: 'native' };
+}
+
+function saveConfig(cfg) {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[Config] Failed to save config:', e.message);
+  }
+}
+
+let appConfig = loadConfig();
 let nativeProcess = null;
 
 // Global EPIPE safety net
@@ -298,11 +320,27 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // REST API: Launch Target Settings
+  if (req.url.startsWith('/api/tablet/launch-target')) {
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const newTarget = parsedUrl.searchParams.get('target');
+    if (newTarget && ['native', 'fully', 'webapk', 'browser'].includes(newTarget)) {
+      appConfig.tabletLaunchTarget = newTarget;
+      saveConfig(appConfig);
+      console.log(`[Config] 🎯 Tablet launch target set to: ${newTarget}`);
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, target: appConfig.tabletLaunchTarget || 'native' }));
+    return;
+  }
+
   // REST API: Launch Tablet App
   if (req.url.startsWith('/api/launch')) {
-    launchTabletApp();
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const targetOverride = parsedUrl.searchParams.get('target');
+    launchTabletApp(null, targetOverride);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
+    res.end(JSON.stringify({ ok: true, target: targetOverride || appConfig.tabletLaunchTarget || 'native' }));
     return;
   }
 
@@ -1034,9 +1072,49 @@ function startAdbWatcher() {
   }, 1500);
 }
 
-// App Launch Automation for Xiaomi Pad (PWA WebAPK or Browser)
-function launchTabletApp(url) {
+// App Launch Automation for Xiaomi Pad (Native App, Fully Kiosk, WebAPK, or Browser)
+function launchTabletApp(url, targetOverride) {
   const targetUrl = url || `http://localhost:${PORT}/?pwa=1`;
+  const target = targetOverride || appConfig.tabletLaunchTarget || 'native';
+  const { exec } = require('child_process');
+
+  if (target === 'native') {
+    // Check if native Android Duo client is installed
+    exec('adb shell pm list packages com.androidduo.client 2>/dev/null', (err, stdout) => {
+      if (!err && stdout && stdout.includes('com.androidduo.client')) {
+        console.log('[ADB] ⚡ Launching native Android Duo client (com.androidduo.client)');
+        exec('adb shell am start -n com.androidduo.client/.MainActivity >/dev/null 2>&1', () => {});
+      } else {
+        console.log('[ADB] ⚠️ Native client not found, falling back to WebAPK/Browser');
+        launchFallbackTabletApp(targetUrl);
+      }
+    });
+  } else if (target === 'fully') {
+    // Check if Fully Kiosk is installed
+    exec('adb shell pm list packages de.ozerov.fully 2>/dev/null', (err, stdout) => {
+      if (!err && stdout && stdout.includes('de.ozerov.fully')) {
+        console.log('[ADB] 🖥 Launching Fully Kiosk Browser');
+        exec(`adb shell am broadcast -a de.ozerov.fully.action.loadurl --es url "${targetUrl}" >/dev/null 2>&1`, () => {
+          exec('adb shell am start -n de.ozerov.fully/.MainActivity >/dev/null 2>&1', () => {});
+        });
+      } else {
+        console.log('[ADB] ⚠️ Fully Kiosk not found, falling back to WebAPK/Browser');
+        launchFallbackTabletApp(targetUrl);
+      }
+    });
+  } else if (target === 'webapk') {
+    launchWebApkTabletApp(targetUrl);
+  } else {
+    console.log(`[ADB] 🌐 Launching via default browser intent: ${targetUrl}`);
+    exec(`adb shell am start -a android.intent.action.VIEW -d "${targetUrl}" >/dev/null 2>&1`, () => {});
+  }
+}
+
+function launchFallbackTabletApp(targetUrl) {
+  launchWebApkTabletApp(targetUrl);
+}
+
+function launchWebApkTabletApp(targetUrl) {
   const { exec } = require('child_process');
   exec('adb shell pm list packages org.chromium.webapk 2>/dev/null', (pErr, pStdout) => {
     if (!pErr && pStdout && pStdout.includes('org.chromium.webapk')) {

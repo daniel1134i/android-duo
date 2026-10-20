@@ -21,6 +21,7 @@ final class ServerManager: ObservableObject {
     @Published var macBattery: Int? = nil
     @Published var localIP: String = "127.0.0.1"
     @Published var hasScreenCapturePermission: Bool = CGPreflightScreenCaptureAccess()
+    @Published var tabletLaunchTarget: String = UserDefaults.standard.string(forKey: "tabletLaunchTarget") ?? "native"
     
     private var serverProcess: Process?
     private var telemetryTimer: Timer?
@@ -197,8 +198,22 @@ final class ServerManager: ObservableObject {
         }.resume()
     }
     
-    func launchTabletApp() {
-        guard let url = URL(string: "http://127.0.0.1:3000/api/launch") else { return }
+    func setTabletLaunchTarget(_ target: String) {
+        tabletLaunchTarget = target
+        UserDefaults.standard.set(target, forKey: "tabletLaunchTarget")
+        guard let url = URL(string: "http://127.0.0.1:3000/api/tablet/launch-target?target=\(target)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
+    func launchTabletApp(targetOverride: String? = nil) {
+        var urlString = "http://127.0.0.1:3000/api/launch"
+        if let target = targetOverride {
+            urlString += "?target=\(target)"
+        }
+        guard let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 2.0
@@ -844,6 +859,39 @@ struct DashboardView: View {
                     .padding(12)
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
+                    
+                    // Tablet Launch Target Settings
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "ipad.and.iphone")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Text("Открывать на планшете по умолчанию:")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        
+                        Picker("", selection: Binding(
+                            get: { server.tabletLaunchTarget },
+                            set: { server.setTabletLaunchTarget($0) }
+                        )) {
+                            Text("⚡ Android Duo App (Рекомендуется)").tag("native")
+                            Text("🖥 Fully Kiosk Browser").tag("fully")
+                            Text("🌐 Chrome WebAPK / Браузер").tag("webapk")
+                        }
+                        .pickerStyle(.menu)
+                        
+                        Text(server.tabletLaunchTarget == "native"
+                            ? "💡 Запускает официальный нативный клиент Android Duo без рамок, водяных знаков и рекламы."
+                            : (server.tabletLaunchTarget == "fully"
+                                ? "💡 Запускает стрим через полноэкранный браузер Fully Kiosk."
+                                : "💡 Открывает веб-версию через Chrome WebAPK или стандартный браузер."))
+                            .font(.system(size: 10.5))
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                    .padding(12)
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                    .cornerRadius(10)
                 }
                 .padding(20)
             }
@@ -1172,6 +1220,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             launchItem.target = self
             menu.addItem(launchItem)
             
+            let defaultSubmenu = NSMenu()
+            let nativeItem = NSMenuItem(title: "⚡ Android Duo App (Собственный)", action: #selector(setLaunchNativeAction), keyEquivalent: "")
+            nativeItem.target = self
+            nativeItem.state = server.tabletLaunchTarget == "native" ? .on : .off
+            defaultSubmenu.addItem(nativeItem)
+            
+            let fullyItem = NSMenuItem(title: "🖥 Fully Kiosk Browser", action: #selector(setLaunchFullyAction), keyEquivalent: "")
+            fullyItem.target = self
+            fullyItem.state = server.tabletLaunchTarget == "fully" ? .on : .off
+            defaultSubmenu.addItem(fullyItem)
+            
+            let webapkItem = NSMenuItem(title: "🌐 Chrome WebAPK / Браузер", action: #selector(setLaunchWebapkAction), keyEquivalent: "")
+            webapkItem.target = self
+            webapkItem.state = (server.tabletLaunchTarget == "webapk" || server.tabletLaunchTarget == "browser") ? .on : .off
+            defaultSubmenu.addItem(webapkItem)
+            
+            let defaultTargetItem = NSMenuItem(title: "⚙️ Запуск на планшете по умолчанию", action: nil, keyEquivalent: "")
+            defaultTargetItem.submenu = defaultSubmenu
+            menu.addItem(defaultTargetItem)
+            
             let sleepItem = NSMenuItem(title: "🌙 Погасить экран планшета", action: #selector(sleepTabletAction), keyEquivalent: "")
             sleepItem.target = self
             menu.addItem(sleepItem)
@@ -1319,7 +1387,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func setRes2560x1600() { server.changeResolution(width: 2560, height: 1600) }
     @objc private func setRes1024x640() { server.changeResolution(width: 1024, height: 640) }
     
+    private func refreshStatusMenu() {
+        if let menu = statusItem?.menu {
+            updateMenu(menu)
+        }
+    }
+
     @objc private func launchTabletAppAction() { server.launchTabletApp() }
+    @objc private func setLaunchNativeAction() { server.setTabletLaunchTarget("native"); refreshStatusMenu() }
+    @objc private func setLaunchFullyAction() { server.setTabletLaunchTarget("fully"); refreshStatusMenu() }
+    @objc private func setLaunchWebapkAction() { server.setTabletLaunchTarget("webapk"); refreshStatusMenu() }
     @objc private func sleepTabletAction() { server.sendPowerState("sleep") }
     @objc private func wakeTabletAction() { server.sendPowerState("wake") }
     
