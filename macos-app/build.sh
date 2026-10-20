@@ -80,6 +80,53 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
 </plist>
 EOF
 
+# 6.5. Build Native macOS WidgetKit Extension (.appex)
+echo "🔨 Building macOS WidgetKit Extension (AndroidDuoWidget.appex)..."
+WIDGET_DIR="$APP_DIR/Contents/PlugIns/AndroidDuoWidget.appex"
+mkdir -p "$WIDGET_DIR/Contents/MacOS"
+mkdir -p "$WIDGET_DIR/Contents/Resources"
+
+swiftc -O -parse-as-library \
+    -target arm64-apple-macos12.3 \
+    -framework WidgetKit -framework SwiftUI -framework IOKit -framework Foundation \
+    "$SCRIPT_DIR/widget.swift" \
+    -o "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
+chmod +x "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
+
+cat << EOF > "$WIDGET_DIR/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>AndroidDuoWidget</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.androidduo.app.widget</string>
+    <key>CFBundleName</key>
+    <string>Android Duo</string>
+    <key>CFBundleDisplayName</key>
+    <string>Android Duo</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.3</string>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.widgetkit-extension</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+WIDGET_BUNDLE_ID="com.androidduo.app.widget"
+codesign --force -s - --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
+codesign --force -s - --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR"
+
 # 7. Ad-hoc codesign inner and outer bundles with stable designated requirement
 echo "🔏 Signing application binary and bundle..."
 BUNDLE_ID="com.androidduo.app"
@@ -92,6 +139,8 @@ echo "📦 Installing Android Duo.app into /Applications..."
 rm -rf "/Applications/Android Duo.app"
 ditto "$APP_DIR" "/Applications/Android Duo.app"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "/Applications/Android Duo.app"
+pluginkit -a "/Applications/Android Duo.app/Contents/PlugIns/AndroidDuoWidget.appex" 2>/dev/null || true
+pluginkit -e use -i com.androidduo.app.widget 2>/dev/null || true
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/Android Duo.app"
 
 # 9. Build standalone Android Duo HUD.app (Pixel Hardware Telemetry Desktop Widget)
