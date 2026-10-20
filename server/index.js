@@ -668,10 +668,10 @@ function broadcastJpegFrame(jpegBuffer) {
   }
   lastJpegFrame = jpegBuffer;
 
-  // WebSockets: Zero-latency drop-late-frames strategy (128KB allows max 1 queued frame)
+  // WebSockets: Zero-latency drop-late-frames strategy (32KB prevents bufferbloat & eliminates ping spikes)
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
-      if (client.bufferedAmount < 131072) {
+      if (client.bufferedAmount < 32768) {
         client.send(jpegBuffer, { binary: true }, () => {});
       }
     }
