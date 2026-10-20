@@ -1902,6 +1902,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         UserDefaults.standard.set(targetMode, forKey: "hudLevelMode")
         UserDefaults.standard.set(true, forKey: "hudAutoOpen")
         
+        let hudUrl = URL(fileURLWithPath: "/Applications/Android Duo HUD.app")
+        if FileManager.default.fileExists(atPath: hudUrl.path) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false
+            NSWorkspace.shared.openApplication(at: hudUrl, configuration: config, completionHandler: nil)
+            refreshStatusMenu()
+            return
+        }
+        
         if hudWindow == nil {
             let hudContent = PixelHardwareHudView(isEmbedded: false, onClose: { [weak self] in
                 self?.hudWindow?.orderOut(nil)
@@ -1938,9 +1947,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func toggleHudWindow() {
+        if let hudApp = NSRunningApplication.runningApplications(withBundleIdentifier: "com.androidduo.hud").first {
+            hudApp.terminate()
+            UserDefaults.standard.set(false, forKey: "hudAutoOpen")
+            refreshStatusMenu()
+            return
+        }
         if let existing = hudWindow, existing.isVisible {
             existing.orderOut(nil)
             UserDefaults.standard.set(false, forKey: "hudAutoOpen")
+            refreshStatusMenu()
             return
         }
         showHud()

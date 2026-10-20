@@ -5,6 +5,7 @@ native/*.o
 *.log
 *.zip
 Android Duo.app
+Android Duo HUD.app
 *.dmg
 AppIcon.icns
 android-client/build/
