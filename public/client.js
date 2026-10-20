@@ -202,6 +202,16 @@
     }, duration);
   }
 
+  function openClaudeHud() {
+    const modal = document.getElementById('claude-hud-modal');
+    if (modal) modal.classList.remove('hidden');
+  }
+
+  function closeClaudeHud() {
+    const modal = document.getElementById('claude-hud-modal');
+    if (modal) modal.classList.add('hidden');
+  }
+
   // ============================================================================
   // PWA (Progressive Web App) & Service Worker
   // ============================================================================
@@ -1008,6 +1018,13 @@
     updateBatteryUI();
   }
 
+  function pixelBar(percent, length = 8) {
+    const p = Math.max(0, Math.min(100, percent || 0));
+    const filled = Math.max(0, Math.min(length, Math.round((p / 100.0) * length)));
+    const empty = Math.max(0, length - filled);
+    return '█'.repeat(filled) + '░'.repeat(empty);
+  }
+
   function updateHardwareMonitor(hw) {
     if (!hw) return;
     const elCpu = document.getElementById('hw-cpu');
@@ -1035,6 +1052,49 @@
     }
     if (elTabBatt && hw.tabletBatt !== undefined && hw.tabletBatt !== null) {
       elTabBatt.textContent = `${hw.tabletBatt}% ${hw.tabletCharging ? '⚡' : ''}`;
+    }
+
+    // Claude Code Retro HUD elements on Tablet
+    const tCpu = document.getElementById('t-hud-cpu');
+    const tCpuBar = document.getElementById('t-hud-cpu-bar');
+    if (tCpu && hw.cpu !== undefined) {
+      tCpu.textContent = `${hw.cpu}%`;
+      if (tCpuBar) {
+        tCpuBar.textContent = `[${pixelBar(hw.cpu, 8)}]`;
+        tCpuBar.style.color = hw.cpu > 80 ? '#ef4444' : (hw.cpu > 50 ? '#f59e0b' : '#34d399');
+      }
+    }
+    const tRam = document.getElementById('t-hud-ram');
+    const tRamBar = document.getElementById('t-hud-ram-bar');
+    const tRamPct = document.getElementById('t-hud-ram-pct');
+    if (tRam && hw.ramUsed && hw.ramTotal) {
+      tRam.textContent = `${hw.ramUsed} / ${hw.ramTotal} GB`;
+      const ramPct = Math.round((parseFloat(hw.ramUsed) / parseFloat(hw.ramTotal)) * 100);
+      if (tRamPct) tRamPct.textContent = `${ramPct}%`;
+      if (tRamBar) tRamBar.textContent = `[${pixelBar(ramPct, 8)}]`;
+    }
+    const tNet = document.getElementById('t-hud-net');
+    const tNetBar = document.getElementById('t-hud-net-bar');
+    const tFps = document.getElementById('t-hud-fps');
+    if (tNet && hw.netSpeed) {
+      tNet.textContent = hw.netSpeed;
+      const netNum = parseFloat(hw.netSpeed) || 0;
+      const netPct = Math.min(100, Math.round(netNum * 20));
+      if (tNetBar) tNetBar.textContent = `[${pixelBar(netPct, 8)}]`;
+      if (tFps) tFps.textContent = `${state.fps || 60} FPS`;
+    }
+    const tTmp = document.getElementById('t-hud-tmp');
+    const tTrans = document.getElementById('t-hud-transport');
+    if (tTmp) {
+      const macT = hw.tempDisplay || hw.tempMac || '36°C';
+      tTmp.textContent = `M2: ${macT} · Pad: 33°C`;
+      if (tTrans) tTrans.textContent = state.transport === 'usb' ? '⚡USB' : '📶WiFi';
+    }
+    const tPwr = document.getElementById('t-hud-pwr');
+    if (tPwr) {
+      const macVal = hw.macBatt !== undefined ? `${hw.macBatt}%${hw.macCharging ? '⚡' : ''}` : '--';
+      const tabVal = hw.tabletBatt !== undefined ? `${hw.tabletBatt}%${hw.tabletCharging ? '⚡' : ''}` : '--';
+      tPwr.textContent = `Mac: ${macVal} · Pad: ${tabVal}`;
     }
   }
 
@@ -2731,19 +2791,28 @@
       });
     }
 
-    // Manual Transport Switch on Pill Tap
+    // Tap on USB or Wi-Fi shows Claude Code Retro HUD Modal on Tablet
     if (pillTransport) {
       pillTransport.style.cursor = 'pointer';
-      pillTransport.title = 'Нажмите для ручного переключения на USB';
+      pillTransport.title = 'Нажмите, чтобы открыть пиксельный монитор железа';
       pillTransport.addEventListener('click', (e) => {
         e.stopPropagation();
-        const isUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
-        if (!isUsb) {
-          showToast('⚡ Переключение на USB...');
-          migrateToUsb(state.serverPort, true);
-        } else {
-          showToast('⚡ Подключение по USB уже активно');
-        }
+        openClaudeHud();
+      });
+    }
+
+    const btnCloseHud = document.getElementById('btn-close-hud');
+    const hudBackdrop = document.getElementById('claude-hud-backdrop');
+    if (btnCloseHud) {
+      btnCloseHud.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeClaudeHud();
+      });
+    }
+    if (hudBackdrop) {
+      hudBackdrop.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeClaudeHud();
       });
     }
 

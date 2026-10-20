@@ -1081,32 +1081,6 @@ struct DashboardView: View {
 
                         PixelHardwareHudView(isEmbedded: true)
                             .padding(.top, 4)
-
-                        HStack(spacing: 8) {
-                            Button(action: {
-                                AppDelegate.shared?.showHud(as: "desktop")
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "pin.fill")
-                                    Text("📌 Как виджет на обои")
-                                }
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-
-                            Button(action: {
-                                AppDelegate.shared?.showHud(as: "floating")
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "macwindow.on.rectangle")
-                                    Text("🪟 Поверх всех окон")
-                                }
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
                     }
                     .padding(12)
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
@@ -1212,9 +1186,7 @@ struct HwStatBox: View {
 // MARK: - Pixel Art / Claude Code Hardware HUD View
 struct PixelHardwareHudView: View {
     @ObservedObject var server = ServerManager.shared
-    var isEmbedded: Bool = false
-    var onClose: (() -> Void)? = nil
-    @State private var currentMode: String = UserDefaults.standard.string(forKey: "hudLevelMode") ?? "desktop"
+    var isEmbedded: Bool = true
     
     // Pixel block progress bar generator: e.g. [██████░░░░]
     private func pixelBar(percent: Int, length: Int = 8) -> String {
@@ -1243,30 +1215,6 @@ struct PixelHardwareHudView: View {
                     Text("LIVE")
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .foregroundColor(.green)
-                }
-                
-                if !isEmbedded {
-                    Button(action: {
-                        let nextMode = currentMode == "desktop" ? "floating" : "desktop"
-                        currentMode = nextMode
-                        AppDelegate.shared?.setHudMode(nextMode)
-                    }) {
-                        Text(currentMode == "desktop" ? "[📌 ВИДЖЕТ]" : "[🪟 HUD]")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(currentMode == "desktop" ? Color(red: 0.30, green: 0.85, blue: 0.55) : Color(red: 0.95, green: 0.75, blue: 0.25))
-                    }
-                    .buttonStyle(.plain)
-                    .help(currentMode == "desktop" ? "Режим Виджета: закреплен на обоях рабочего стола под окнами. Нажмите, чтобы сделать плавающим поверх всех окон." : "Режим HUD: висит поверх всех окон. Нажмите, чтобы закрепить на обоях как виджет.")
-                }
-                
-                if let close = onClose {
-                    Button(action: close) {
-                        Text("[✕]")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(red: 0.88, green: 0.55, blue: 0.28))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Закрыть виджет")
                 }
                 Text("─╮")
                     .foregroundColor(Color(red: 0.88, green: 0.55, blue: 0.28))
@@ -1415,7 +1363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Start server automatically
         server.startServer()
         
-        // 4. Register Keyboard Shortcuts: Cmd+Q to quit, Opt+Cmd+Right Arrow to throw window, Opt+Cmd+H for Pixel HUD
+        // 4. Register Keyboard Shortcuts: Cmd+Q to quit, Opt+Cmd+Right Arrow to throw window
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.modifierFlags.contains(.command) && (event.keyCode == 12 || event.charactersIgnoringModifiers == "q") {
                 self?.quitApplication()
@@ -1423,10 +1371,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             if event.modifierFlags.contains([.command, .option]) && event.keyCode == 124 { // Right Arrow
                 moveFrontmostWindowToTablet()
-                return nil
-            }
-            if event.modifierFlags.contains([.command, .option]) && event.charactersIgnoringModifiers?.lowercased() == "h" {
-                self?.toggleHudWindow()
                 return nil
             }
             return event
@@ -1449,11 +1393,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         wsCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
             fputs("[Android Duo App] Screens did wake. Notifying server...\n", stderr)
             self?.notifyServerPowerState("wake")
-        }
-        
-        // 6. Restore desktop widget if user had it open
-        if UserDefaults.standard.bool(forKey: "hudAutoOpen") {
-            showHud()
         }
     }
     
@@ -1597,45 +1536,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.toolTip = "Android Duo — \(server.connectionType) • \(server.resolution) • \(server.fps) FPS"
         }
         
-        // Header Status
-        let statusTitle = server.isConnected ? (server.transport == "usb" ? "🟢 Xiaomi Pad SE: USB ⚡" : "🟢 Xiaomi Pad SE: Wi-Fi 📶") : (server.isRunning ? "🟡 Ожидание планшета..." : "🔴 Сервер остановлен")
-        let statusMenuItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        statusMenuItem.isEnabled = false
-        menu.addItem(statusMenuItem)
-        
-        // Link Quality & Telemetry
-        if server.isConnected {
-            let channelDetail = server.transport == "usb" 
-                ? "⚡ Прямой USB-кабель (127.0.0.1) • Задержка < 1 мс" 
-                : "📶 Сеть Wi-Fi (\(server.clientIp.isEmpty ? server.localIP : server.clientIp))"
-            let channelItem = NSMenuItem(title: channelDetail, action: nil, keyEquivalent: "")
-            channelItem.isEnabled = false
-            menu.addItem(channelItem)
-            
-            let statsTitle = "⚡ \(server.fps) FPS • \(server.resolution) • Поток 90 Гц"
-            let statsItem = NSMenuItem(title: statsTitle, action: nil, keyEquivalent: "")
-            statsItem.isEnabled = false
-            menu.addItem(statsItem)
-            
-            // Battery Telemetry
-            if let batt = server.tabletBattery {
-                var battTitle = "🔋 Батарея планшета: \(batt)%"
-                if server.isBatteryGuardActive {
-                    battTitle = "🛡 Батарея планшета: \(batt)% (Защита 80% активна)"
-                } else if server.isTabletCharging {
-                    battTitle += " ⚡ (Зарядка)"
-                }
-                let battItem = NSMenuItem(title: battTitle, action: nil, keyEquivalent: "")
-                battItem.isEnabled = false
-                menu.addItem(battItem)
-            }
-            if let macBatt = server.macBattery {
-                let macTitle = "💻 Батарея MacBook: \(macBatt)%"
-                let macItem = NSMenuItem(title: macTitle, action: nil, keyEquivalent: "")
-                macItem.isEnabled = false
-                menu.addItem(macItem)
-            }
-        }
+        // Claude Code Pixel Hardware HUD embedded directly into Status Menu
+        let hudItem = NSMenuItem()
+        let hudHost = NSHostingView(rootView:
+            PixelHardwareHudView(isEmbedded: true)
+                .frame(width: 324)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+        )
+        hudHost.frame = NSRect(x: 0, y: 0, width: 344, height: 165)
+        hudItem.view = hudHost
+        menu.addItem(hudItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -1643,26 +1554,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let moveWinItem = NSMenuItem(title: "🚀 Перенести активное окно на планшет", action: #selector(moveWindowAction), keyEquivalent: "")
         moveWinItem.target = self
         menu.addItem(moveWinItem)
-        
-        let hudItem = NSMenuItem(title: "👾 Пиксельный виджет / HUD железа", action: #selector(toggleHudAction), keyEquivalent: "h")
-        hudItem.keyEquivalentModifierMask = [.command, .option]
-        hudItem.target = self
-        menu.addItem(hudItem)
-        
-        let widgetSubmenu = NSMenu()
-        let deskItem = NSMenuItem(title: "📌 Закрепить на обоях (Виджет macOS)", action: #selector(setHudModeDesktopAction), keyEquivalent: "")
-        deskItem.target = self
-        deskItem.state = (UserDefaults.standard.string(forKey: "hudLevelMode") ?? "desktop") == "desktop" ? .on : .off
-        widgetSubmenu.addItem(deskItem)
-        
-        let floatItem = NSMenuItem(title: "🪟 Плавающий поверх всех окон (HUD)", action: #selector(setHudModeFloatingAction), keyEquivalent: "")
-        floatItem.target = self
-        floatItem.state = (UserDefaults.standard.string(forKey: "hudLevelMode") ?? "desktop") == "floating" ? .on : .off
-        widgetSubmenu.addItem(floatItem)
-        
-        let modeParentItem = NSMenuItem(title: "⚙️ Режим отображения виджета", action: nil, keyEquivalent: "")
-        modeParentItem.submenu = widgetSubmenu
-        menu.addItem(modeParentItem)
         
         if server.isAdbConnected {
             let launchItem = NSMenuItem(title: "📱 Запустить приложение на планшете (ADB)", action: #selector(launchTabletAppAction), keyEquivalent: "")
@@ -1883,96 +1774,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func setOrientAutoAction() { server.setOrientation("auto"); refreshStatusMenu() }
     @objc private func setOrientLandscapeAction() { server.setOrientation("landscape"); refreshStatusMenu() }
     @objc private func setOrientPortraitAction() { server.setOrientation("portrait"); refreshStatusMenu() }
-    
-    func setHudMode(_ mode: String) {
-        UserDefaults.standard.set(mode, forKey: "hudLevelMode")
-        guard let win = hudWindow else { return }
-        if mode == "desktop" {
-            win.level = NSWindow.Level(NSWindow.Level.normal.rawValue - 1)
-            win.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        } else {
-            win.level = .floating
-            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        }
-        refreshStatusMenu()
-    }
-
-    func showHud(as mode: String? = nil) {
-        let targetMode = mode ?? UserDefaults.standard.string(forKey: "hudLevelMode") ?? "desktop"
-        UserDefaults.standard.set(targetMode, forKey: "hudLevelMode")
-        UserDefaults.standard.set(true, forKey: "hudAutoOpen")
-        
-        let hudUrl = URL(fileURLWithPath: "/Applications/Android Duo HUD.app")
-        if FileManager.default.fileExists(atPath: hudUrl.path) {
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = false
-            NSWorkspace.shared.openApplication(at: hudUrl, configuration: config, completionHandler: nil)
-            refreshStatusMenu()
-            return
-        }
-        
-        if hudWindow == nil {
-            let hudContent = PixelHardwareHudView(isEmbedded: false, onClose: { [weak self] in
-                self?.hudWindow?.orderOut(nil)
-                UserDefaults.standard.set(false, forKey: "hudAutoOpen")
-            })
-            .padding(8)
-            
-            let hosting = NSHostingController(rootView: hudContent)
-            let win = NSWindow(contentViewController: hosting)
-            win.styleMask = [.borderless]
-            win.isOpaque = false
-            win.backgroundColor = .clear
-            win.hasShadow = true
-            win.isMovableByWindowBackground = true
-            win.setFrameAutosaveName("AndroidDuoPixelHudWindow")
-            
-            if win.frame.origin.x == 0 && win.frame.origin.y == 0 {
-                if let mainScreen = NSScreen.screens.first {
-                    let screenRect = mainScreen.visibleFrame
-                    let w: CGFloat = 340
-                    let h: CGFloat = 200
-                    let x = screenRect.origin.x + screenRect.width - w - 24
-                    let y = screenRect.origin.y + screenRect.height - h - 30
-                    win.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
-                }
-            }
-            hudWindow = win
-        }
-        
-        setHudMode(targetMode)
-        hudWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        refreshStatusMenu()
-    }
-
-    func toggleHudWindow() {
-        if let hudApp = NSRunningApplication.runningApplications(withBundleIdentifier: "com.androidduo.hud").first {
-            hudApp.terminate()
-            UserDefaults.standard.set(false, forKey: "hudAutoOpen")
-            refreshStatusMenu()
-            return
-        }
-        if let existing = hudWindow, existing.isVisible {
-            existing.orderOut(nil)
-            UserDefaults.standard.set(false, forKey: "hudAutoOpen")
-            refreshStatusMenu()
-            return
-        }
-        showHud()
-    }
-
-    @objc private func toggleHudAction() {
-        toggleHudWindow()
-    }
-    
-    @objc private func setHudModeDesktopAction() {
-        showHud(as: "desktop")
-    }
-    
-    @objc private func setHudModeFloatingAction() {
-        showHud(as: "floating")
-    }
     
     @objc private func restartAction() {
         server.restartServer()

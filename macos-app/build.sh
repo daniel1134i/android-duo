@@ -80,61 +80,6 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
 </plist>
 EOF
 
-# 6.5. Build Native macOS WidgetKit Extension (.appex)
-echo "🔨 Building macOS WidgetKit Extension (AndroidDuoWidget.appex)..."
-WIDGET_DIR="$APP_DIR/Contents/PlugIns/AndroidDuoWidget.appex"
-mkdir -p "$WIDGET_DIR/Contents/MacOS"
-mkdir -p "$WIDGET_DIR/Contents/Resources"
-
-swiftc -O -parse-as-library \
-    -target arm64-apple-macos12.3 \
-    -framework WidgetKit -framework SwiftUI -framework IOKit -framework Foundation \
-    "$SCRIPT_DIR/widget.swift" \
-    -o "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
-chmod +x "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
-
-cat << EOF > "$WIDGET_DIR/Contents/Info.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>AndroidDuoWidget</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.androidduo.app.widget</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>Android Duo</string>
-    <key>CFBundleDisplayName</key>
-    <string>Android Duo</string>
-    <key>CFBundlePackageType</key>
-    <string>XPC!</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundleSupportedPlatforms</key>
-    <array>
-        <string>MacOSX</string>
-    </array>
-    <key>LSMinimumSystemVersion</key>
-    <string>12.3</string>
-    <key>NSExtension</key>
-    <dict>
-        <key>NSExtensionPointIdentifier</key>
-        <string>com.apple.widgetkit-extension</string>
-    </dict>
-</dict>
-</plist>
-EOF
-
-WIDGET_BUNDLE_ID="com.androidduo.app.widget"
-codesign --force -s - --entitlements "$SCRIPT_DIR/widget-entitlements.plist" --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
-codesign --force -s - --entitlements "$SCRIPT_DIR/widget-entitlements.plist" --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR"
-
 # 7. Ad-hoc codesign inner and outer bundles with stable designated requirement
 echo "🔏 Signing application binary and bundle..."
 BUNDLE_ID="com.androidduo.app"
@@ -147,72 +92,14 @@ echo "📦 Installing Android Duo.app into /Applications..."
 rm -rf "/Applications/Android Duo.app"
 ditto "$APP_DIR" "/Applications/Android Duo.app"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "/Applications/Android Duo.app"
-pluginkit -a "/Applications/Android Duo.app/Contents/PlugIns/AndroidDuoWidget.appex" 2>/dev/null || true
-pluginkit -e use -i com.androidduo.app.widget 2>/dev/null || true
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/Android Duo.app"
-killall chronod NotificationCenter 2>/dev/null || true
-
-# 9. Build standalone Android Duo HUD.app (Pixel Hardware Telemetry Desktop Widget)
-HUD_APP_DIR="$ROOT_DIR/Android Duo HUD.app"
-echo "🔨 Building standalone Android Duo HUD.app..."
-swiftc -O -parse-as-library \
-    -target arm64-apple-macos12.3 \
-    "$SCRIPT_DIR/hud-main.swift" \
-    -o "$SCRIPT_DIR/Android Duo HUD"
-
-rm -rf "$HUD_APP_DIR"
-mkdir -p "$HUD_APP_DIR/Contents/MacOS"
-mkdir -p "$HUD_APP_DIR/Contents/Resources"
-mv "$SCRIPT_DIR/Android Duo HUD" "$HUD_APP_DIR/Contents/MacOS/Android Duo HUD"
-chmod +x "$HUD_APP_DIR/Contents/MacOS/Android Duo HUD"
-
-if [ -f "$ROOT_DIR/AppIcon.icns" ]; then
-    cp "$ROOT_DIR/AppIcon.icns" "$HUD_APP_DIR/Contents/Resources/AppIcon.icns"
-fi
-
-cat << EOF > "$HUD_APP_DIR/Contents/Info.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>Android Duo HUD</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.androidduo.hud</string>
-    <key>CFBundleName</key>
-    <string>Android Duo HUD</string>
-    <key>CFBundleDisplayName</key>
-    <string>Android Duo HUD</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>12.3</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-</dict>
-</plist>
-EOF
-
-HUD_BUNDLE_ID="com.androidduo.hud"
-codesign --force -s - --identifier "$HUD_BUNDLE_ID" "$HUD_APP_DIR/Contents/MacOS/Android Duo HUD"
-codesign --force -s - --identifier "$HUD_BUNDLE_ID" "$HUD_APP_DIR"
-
-echo "📦 Installing Android Duo HUD.app into /Applications..."
-rm -rf "/Applications/Android Duo HUD.app"
-ditto "$HUD_APP_DIR" "/Applications/Android Duo HUD.app"
-codesign --force -s - --identifier "$HUD_BUNDLE_ID" "/Applications/Android Duo HUD.app"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/Android Duo HUD.app"
 
 defaults write com.apple.dock ResetLaunchPad -bool true
 killall Dock 2>/dev/null || true
 
-echo "✅ Successfully built and signed: $APP_DIR and $HUD_APP_DIR"
+# Clean up standalone HUD from /Applications if present
+rm -rf "/Applications/Android Duo HUD.app"
+rm -rf "$ROOT_DIR/Android Duo HUD.app"
+
+echo "✅ Successfully built and signed: $APP_DIR"
 

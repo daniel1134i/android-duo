@@ -15,12 +15,9 @@ bash "$SCRIPT_DIR/build.sh"
 rm -rf "$TEMP_DMG_DIR"
 mkdir -p "$TEMP_DMG_DIR"
 
-# Copy Apps to staging dir
+# Copy App to staging dir
 echo "📦 Preparing DMG staging directory..."
 ditto "$APP_DIR" "$TEMP_DMG_DIR/Android Duo.app"
-if [ -d "$ROOT_DIR/Android Duo HUD.app" ]; then
-    ditto "$ROOT_DIR/Android Duo HUD.app" "$TEMP_DMG_DIR/Android Duo HUD.app"
-fi
 
 # Create symlink to /Applications for easy drag-and-drop installation
 ln -s /Applications "$TEMP_DMG_DIR/Applications"

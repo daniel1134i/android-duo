@@ -1342,4 +1342,118 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Claude Code Retro Terminal HUD Modal on Tablet */
+.claude-hud-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
+  animation: fadeIn 0.15s ease-out;
+}
+.claude-hud-modal.hidden {
+  display: none !important;
+}
+.claude-hud-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.claude-hud-container {
+  position: relative;
+  z-index: 10001;
+  max-width: 95vw;
+}
+.claude-hud-box {
+  background: rgba(13, 17, 23, 0.98);
+  border: 1px solid rgba(224, 140, 72, 0.6);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7), 0 0 20px rgba(224, 140, 72, 0.15);
+  color: #c9d1d9;
+  font-size: 12.5px;
+  line-height: 1.45;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.hud-line {
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+}
+.hud-border {
+  color: #e08c48;
+}
+.hud-header {
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+}
+.hud-title {
+  color: #fca564;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+.hud-live {
+  color: #10b981;
+  font-size: 9.5px;
+  font-weight: 800;
+  margin-left: auto;
+}
+.hud-close-btn {
+  background: transparent;
+  border: none;
+  color: #e08c48;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.hud-close-btn:active {
+  transform: scale(0.9);
+}
+.hud-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-weight: 700;
+}
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.hud-label {
+  color: #8b949e;
+  width: 32px;
+}
+.hud-bar {
+  letter-spacing: 1px;
+}
+.hud-cpu-bar { color: #34d399; }
+.hud-ram-bar { color: #38bdf8; }
+.hud-net-bar { color: #fbbf24; }
+.hud-val {
+  color: #ffffff;
+}
+.hud-spacer {
+  flex: 1;
+}
+.hud-sub {
+  color: #8b949e;
+}
+.hud-fps { color: #34d399; font-weight: 800; }
+.hud-transport { color: #38bdf8; }
+.hud-ok { color: #10b981; font-weight: 800; }
+.hud-footer {
+  margin-top: 6px;
+  font-size: 11px;
+}
+
 
