@@ -21,6 +21,7 @@ final class ServerManager: ObservableObject {
     @Published var ramText: String = "6.1 / 8.0 GB"
     @Published var netSpeed: String = "0.0 MB/s"
     @Published var tempText: String = "36°C"
+    @Published var isMacCharging: Bool = true
     @Published var tabletBattery: Int? = nil
     @Published var isTabletCharging: Bool = false
     @Published var isBatteryGuardActive: Bool = false
@@ -430,6 +431,8 @@ final class ServerManager: ObservableObject {
                     if let temp = hw["tempDisplay"] as? String ?? hw["tempMac"] as? String {
                         self.tempText = temp
                     }
+                    if let macC = hw["macCharging"] as? Bool { self.isMacCharging = macC }
+                    if let tabC = hw["tabletCharging"] as? Bool { self.isTabletCharging = tabC }
                 }
                 if let orient = json["orientation"] as? String {
                     self.orientation = orient
@@ -1075,6 +1078,21 @@ struct DashboardView: View {
                             HwStatBox(label: "MacBook", value: server.macBattery != nil ? "\(server.macBattery!)%" : "--%")
                             HwStatBox(label: "Планшет", value: server.tabletBattery != nil ? "\(server.tabletBattery!)%" : "--%")
                         }
+
+                        PixelHardwareHudView()
+                            .padding(.top, 4)
+
+                        Button(action: {
+                            AppDelegate.shared?.toggleHudWindow()
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "terminal.fill")
+                                Text("Плавающий пиксельный HUD на рабочий стол (Claude Code)")
+                            }
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
                     .padding(12)
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
@@ -1177,12 +1195,167 @@ struct HwStatBox: View {
     }
 }
 
+// MARK: - Pixel Art / Claude Code Hardware HUD View
+struct PixelHardwareHudView: View {
+    @ObservedObject var server = ServerManager.shared
+    var onClose: (() -> Void)? = nil
+    
+    // Pixel block progress bar generator: e.g. [██████░░░░]
+    private func pixelBar(percent: Int, length: Int = 8) -> String {
+        let p = max(0, min(100, percent))
+        let filled = max(0, min(length, Int(round(Double(p) / 100.0 * Double(length)))))
+        let empty = max(0, length - filled)
+        return String(repeating: "█", count: filled) + String(repeating: "░", count: empty)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            // Header bar
+            HStack(spacing: 5) {
+                Text("╭─")
+                    .foregroundColor(Color(red: 0.88, green: 0.55, blue: 0.28))
+                Text("CLAUDE CODE // DUO-HUD")
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundColor(Color(red: 0.98, green: 0.65, blue: 0.35))
+                
+                Spacer()
+                
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 5, height: 5)
+                    Text("LIVE")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(.green)
+                }
+                
+                if let close = onClose {
+                    Button(action: close) {
+                        Text("[✕]")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(red: 0.88, green: 0.55, blue: 0.28))
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text("─╮")
+                    .foregroundColor(Color(red: 0.88, green: 0.55, blue: 0.28))
+            }
+            .padding(.bottom, 1)
+            
+            // Metrics in Pixel / Monospace ASCII aesthetic
+            VStack(alignment: .leading, spacing: 4) {
+                // CPU Row
+                HStack(spacing: 4) {
+                    Text("│ CPU")
+                        .foregroundColor(.secondary)
+                    Text("[\(pixelBar(percent: server.cpuPercent, length: 8))]")
+                        .foregroundColor(server.cpuPercent > 80 ? .red : (server.cpuPercent > 50 ? .orange : Color(red: 0.30, green: 0.85, blue: 0.55)))
+                    Text("\(String(format: "%2d", server.cpuPercent))%")
+                        .foregroundColor(.white)
+                    Spacer()
+                    Text("Apple M2")
+                        .foregroundColor(Color(red: 0.7, green: 0.7, blue: 0.75))
+                    Text("│")
+                        .foregroundColor(.secondary)
+                }
+                
+                // RAM Row
+                let ramParts = server.ramText.components(separatedBy: " / ")
+                let ramUsedNum = Double(ramParts.first?.trimmingCharacters(in: .whitespaces) ?? "6.1") ?? 6.1
+                let ramPct = Int((ramUsedNum / 8.0) * 100.0)
+                HStack(spacing: 4) {
+                    Text("│ RAM")
+                        .foregroundColor(.secondary)
+                    Text("[\(pixelBar(percent: ramPct, length: 8))]")
+                        .foregroundColor(Color(red: 0.35, green: 0.75, blue: 0.98))
+                    Text(server.ramText)
+                        .foregroundColor(.white)
+                    Spacer()
+                    Text("\(ramPct)%")
+                        .foregroundColor(Color(red: 0.7, green: 0.7, blue: 0.75))
+                    Text("│")
+                        .foregroundColor(.secondary)
+                }
+                
+                // NET Speed Row
+                let netNum = Double(server.netSpeed.components(separatedBy: " ").first ?? "1.5") ?? 1.5
+                let netPct = min(100, Int(netNum * 20))
+                HStack(spacing: 4) {
+                    Text("│ NET")
+                        .foregroundColor(.secondary)
+                    Text("[\(pixelBar(percent: netPct, length: 8))]")
+                        .foregroundColor(Color(red: 0.95, green: 0.75, blue: 0.25))
+                    Text(server.netSpeed)
+                        .foregroundColor(.white)
+                    Spacer()
+                    Text("\(server.fps) FPS")
+                        .foregroundColor(Color(red: 0.35, green: 0.85, blue: 0.65))
+                    Text("│")
+                        .foregroundColor(.secondary)
+                }
+                
+                // TEMP & STATUS
+                HStack(spacing: 4) {
+                    Text("│ TMP")
+                        .foregroundColor(.secondary)
+                    Text("M2: \(server.tempText)")
+                        .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
+                    Text("·")
+                        .foregroundColor(.secondary)
+                    Text("Pad: \(server.tabletBattery != nil ? "33°C" : "--")")
+                        .foregroundColor(Color(red: 0.45, green: 0.85, blue: 0.95))
+                    Spacer()
+                    Text(server.transport == "usb" ? "⚡USB" : "📶WiFi")
+                        .foregroundColor(.cyan)
+                    Text("│")
+                        .foregroundColor(.secondary)
+                }
+                
+                // BATTERY ROW
+                let macIcon = server.isMacCharging ? "⚡" : ""
+                let tabIcon = server.isBatteryGuardActive ? "🛡" : (server.isTabletCharging ? "⚡" : "")
+                HStack(spacing: 4) {
+                    Text("│ PWR")
+                        .foregroundColor(.secondary)
+                    Text("Mac: \(server.macBattery != nil ? "\(server.macBattery!)%" : "--")\(macIcon)")
+                        .foregroundColor(Color(red: 0.95, green: 0.85, blue: 0.45))
+                    Text("·")
+                        .foregroundColor(.secondary)
+                    Text("Pad: \(server.tabletBattery != nil ? "\(server.tabletBattery!)%" : "--")\(tabIcon)")
+                        .foregroundColor(Color(red: 0.95, green: 0.85, blue: 0.45))
+                    Spacer()
+                    Text("OK")
+                        .foregroundColor(.green)
+                    Text("│")
+                        .foregroundColor(.secondary)
+                }
+            }
+            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+            
+            // Footer border
+            HStack {
+                Text("╰──────────────────────────────────────╯")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(red: 0.88, green: 0.55, blue: 0.28))
+            }
+        }
+        .padding(10)
+        .background(Color(red: 0.08, green: 0.09, blue: 0.12).opacity(0.96))
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(red: 0.88, green: 0.55, blue: 0.28).opacity(0.4), lineWidth: 1)
+        )
+    }
+}
+
 // MARK: - App Delegate & Menu Bar Setup
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     static weak var shared: AppDelegate?
     
     private var statusItem: NSStatusItem?
     private var window: NSWindow!
+    private var hudWindow: NSWindow?
     private let server = ServerManager.shared
     private let mode = AppModeManager.shared
     private var sigtermSource: DispatchSourceSignal?
@@ -1211,7 +1384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Start server automatically
         server.startServer()
         
-        // 4. Register Keyboard Shortcuts: Cmd+Q to quit, Opt+Cmd+Right Arrow to throw window
+        // 4. Register Keyboard Shortcuts: Cmd+Q to quit, Opt+Cmd+Right Arrow to throw window, Opt+Cmd+H for Pixel HUD
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.modifierFlags.contains(.command) && (event.keyCode == 12 || event.charactersIgnoringModifiers == "q") {
                 self?.quitApplication()
@@ -1219,6 +1392,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             if event.modifierFlags.contains([.command, .option]) && event.keyCode == 124 { // Right Arrow
                 moveFrontmostWindowToTablet()
+                return nil
+            }
+            if event.modifierFlags.contains([.command, .option]) && event.charactersIgnoringModifiers?.lowercased() == "h" {
+                self?.toggleHudWindow()
                 return nil
             }
             return event
@@ -1430,6 +1607,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let moveWinItem = NSMenuItem(title: "🚀 Перенести активное окно на планшет", action: #selector(moveWindowAction), keyEquivalent: "")
         moveWinItem.target = self
         menu.addItem(moveWinItem)
+        
+        let hudItem = NSMenuItem(title: "👾 Пиксельный HUD железа (Claude Code)", action: #selector(toggleHudAction), keyEquivalent: "h")
+        hudItem.keyEquivalentModifierMask = [.command, .option]
+        hudItem.target = self
+        menu.addItem(hudItem)
         
         if server.isAdbConnected {
             let launchItem = NSMenuItem(title: "📱 Запустить приложение на планшете (ADB)", action: #selector(launchTabletAppAction), keyEquivalent: "")
@@ -1650,6 +1832,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func setOrientAutoAction() { server.setOrientation("auto"); refreshStatusMenu() }
     @objc private func setOrientLandscapeAction() { server.setOrientation("landscape"); refreshStatusMenu() }
     @objc private func setOrientPortraitAction() { server.setOrientation("portrait"); refreshStatusMenu() }
+    
+    func toggleHudWindow() {
+        if let existing = hudWindow, existing.isVisible {
+            existing.orderOut(nil)
+            return
+        }
+        
+        if hudWindow == nil {
+            let hudContent = PixelHardwareHudView(onClose: { [weak self] in
+                self?.hudWindow?.orderOut(nil)
+            })
+            .padding(8)
+            
+            let hosting = NSHostingController(rootView: hudContent)
+            let win = NSWindow(contentViewController: hosting)
+            win.styleMask = [.borderless]
+            win.isOpaque = false
+            win.backgroundColor = .clear
+            win.hasShadow = true
+            win.level = .floating
+            win.isMovableByWindowBackground = true
+            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            
+            if let mainScreen = NSScreen.screens.first {
+                let screenRect = mainScreen.visibleFrame
+                let w: CGFloat = 340
+                let h: CGFloat = 200
+                let x = screenRect.origin.x + screenRect.width - w - 24
+                let y = screenRect.origin.y + screenRect.height - h - 30
+                win.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
+            }
+            hudWindow = win
+        }
+        
+        hudWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func toggleHudAction() {
+        toggleHudWindow()
+    }
     
     @objc private func restartAction() {
         server.restartServer()
