@@ -98,10 +98,14 @@ cat << EOF > "$WIDGET_DIR/Contents/Info.plist"
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
     <key>CFBundleExecutable</key>
     <string>AndroidDuoWidget</string>
     <key>CFBundleIdentifier</key>
     <string>com.androidduo.app.widget</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
     <key>CFBundleName</key>
     <string>Android Duo</string>
     <key>CFBundleDisplayName</key>
@@ -112,6 +116,10 @@ cat << EOF > "$WIDGET_DIR/Contents/Info.plist"
     <string>1.0.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
     <key>LSMinimumSystemVersion</key>
     <string>12.3</string>
     <key>NSExtension</key>
@@ -124,8 +132,8 @@ cat << EOF > "$WIDGET_DIR/Contents/Info.plist"
 EOF
 
 WIDGET_BUNDLE_ID="com.androidduo.app.widget"
-codesign --force -s - --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
-codesign --force -s - --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR"
+codesign --force -s - --entitlements "$SCRIPT_DIR/widget-entitlements.plist" --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR/Contents/MacOS/AndroidDuoWidget"
+codesign --force -s - --entitlements "$SCRIPT_DIR/widget-entitlements.plist" --identifier "$WIDGET_BUNDLE_ID" "$WIDGET_DIR"
 
 # 7. Ad-hoc codesign inner and outer bundles with stable designated requirement
 echo "🔏 Signing application binary and bundle..."
@@ -142,6 +150,7 @@ codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$
 pluginkit -a "/Applications/Android Duo.app/Contents/PlugIns/AndroidDuoWidget.appex" 2>/dev/null || true
 pluginkit -e use -i com.androidduo.app.widget 2>/dev/null || true
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/Android Duo.app"
+killall chronod NotificationCenter 2>/dev/null || true
 
 # 9. Build standalone Android Duo HUD.app (Pixel Hardware Telemetry Desktop Widget)
 HUD_APP_DIR="$ROOT_DIR/Android Duo HUD.app"
