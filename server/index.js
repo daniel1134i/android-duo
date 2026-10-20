@@ -19,7 +19,7 @@ function loadConfig() {
   } catch (e) {
     console.error('[Config] Failed to load config:', e.message);
   }
-  return { tabletLaunchTarget: 'native' };
+  return { tabletLaunchTarget: 'native', batteryGuard: true };
 }
 
 function saveConfig(cfg) {
@@ -31,6 +31,9 @@ function saveConfig(cfg) {
 }
 
 let appConfig = loadConfig();
+if (appConfig.batteryGuard === undefined) {
+  appConfig.batteryGuard = true;
+}
 let nativeProcess = null;
 
 // Global EPIPE safety net
@@ -159,10 +162,17 @@ function setTabletHardwareRefreshRate(fps) {
   });
 }
 
-// Battery Monitoring (Mac + Tablet)
+// Battery Monitoring & Smart Battery Guard (Mac + Tablet)
 let currentBattery = {
   mac: { level: null, charging: false },
   tablet: { level: null, charging: false }
+};
+
+let batteryGuard = {
+  enabled: appConfig.batteryGuard !== undefined ? !!appConfig.batteryGuard : true,
+  active: false,
+  maxLevel: 80,
+  minLevel: 70
 };
 
 function checkBatteryStatus(callback) {
@@ -179,8 +189,10 @@ function checkBatteryStatus(callback) {
       }
     }
 
-    // Read tablet battery via ADB if connected
-    exec('adb shell dumpsys battery 2>/dev/null', { timeout: 2500 }, (aErr, aStdout) => {
+    // Read tablet battery via ADB cleanly without triggering connect/disconnect sound loops
+    const adbBattCmd = 'adb shell dumpsys battery 2>/dev/null';
+
+    exec(adbBattCmd, { timeout: 2500 }, (aErr, aStdout) => {
       if (!aErr && aStdout) {
         const lMatch = aStdout.match(/level:\s*(\d+)/);
         const sMatch = aStdout.match(/status:\s*(\d+)/);
@@ -197,6 +209,23 @@ function checkBatteryStatus(callback) {
                             (wirelessMatch && wirelessMatch[1] === 'true');
           const tCharging = isStatusCharging || isPowered;
           currentBattery.tablet = { level: tLevel, charging: tCharging };
+
+          // --- Smart Battery Guard 80% Logic ---
+          if (batteryGuard.enabled) {
+            if (tLevel >= batteryGuard.maxLevel) {
+              if (!batteryGuard.active) {
+                batteryGuard.active = true;
+                console.log(`[BatteryGuard] 🛡 Tablet reached ${tLevel}% (threshold: ${batteryGuard.maxLevel}%).`);
+              }
+            } else if (tLevel <= batteryGuard.minLevel) {
+              if (batteryGuard.active) {
+                batteryGuard.active = false;
+                console.log(`[BatteryGuard] ⚡ Tablet battery dropped to ${tLevel}% <= ${batteryGuard.minLevel}%.`);
+              }
+            }
+          } else {
+            batteryGuard.active = false;
+          }
         }
       } else {
         currentBattery.tablet = { level: null, charging: false };
@@ -213,7 +242,13 @@ function broadcastBattery() {
     const payload = JSON.stringify({
       type: 'battery',
       mac: batt.mac,
-      tablet: batt.tablet
+      tablet: batt.tablet,
+      guard: {
+        enabled: batteryGuard.enabled,
+        active: batteryGuard.active,
+        maxLevel: batteryGuard.maxLevel,
+        minLevel: batteryGuard.minLevel
+      }
     });
     for (const client of wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
@@ -260,6 +295,12 @@ const server = http.createServer((req, res) => {
       port: PORT,
       display: currentDisplayInfo,
       battery: currentBattery,
+      batteryGuard: {
+        enabled: batteryGuard.enabled,
+        active: batteryGuard.active,
+        maxLevel: batteryGuard.maxLevel,
+        minLevel: batteryGuard.minLevel
+      },
       connectedClients: wss ? wss.clients.size : 0,
       screenCaptureGranted: isScreenCaptureGranted,
       transport: transport,
@@ -270,6 +311,36 @@ const server = http.createServer((req, res) => {
         isUsb: !!c.isUsb
       }))
     }));
+    return;
+  }
+
+  // REST API: Battery Guard Toggle
+  if (req.url.startsWith('/api/battery/guard')) {
+    const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const enabledParam = urlObj.searchParams.get('enabled');
+    if (enabledParam !== null) {
+      batteryGuard.enabled = (enabledParam === 'true' || enabledParam === '1');
+      appConfig.batteryGuard = batteryGuard.enabled;
+      saveConfig(appConfig);
+      console.log(`[BatteryGuard] 🛡 Battery Guard set to: ${batteryGuard.enabled ? 'ON' : 'OFF'}`);
+      if (!batteryGuard.enabled && batteryGuard.active) {
+        batteryGuard.active = false;
+        const { exec } = require('child_process');
+        exec('adb shell "cmd battery reset -f" >/dev/null 2>&1', () => {});
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, batteryGuard }));
+    broadcastBattery();
+    return;
+  }
+
+  // REST API: Open Native HyperOS Battery Protection Settings
+  if (req.url.startsWith('/api/battery/native-settings')) {
+    const { exec } = require('child_process');
+    exec('adb shell "am start -a miui.intent.action.CHARGE_FEATURE_MANAGER" >/dev/null 2>&1', () => {});
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 
@@ -629,6 +700,21 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
+      // Handle Battery Guard toggle from client
+      if (msg.type === 'toggle_battery_guard') {
+        batteryGuard.enabled = !!msg.enabled;
+        appConfig.batteryGuard = batteryGuard.enabled;
+        saveConfig(appConfig);
+        console.log(`[BatteryGuard] 🛡 Battery Guard toggled by client: ${batteryGuard.enabled ? 'ON' : 'OFF'}`);
+        if (!batteryGuard.enabled && batteryGuard.active) {
+          batteryGuard.active = false;
+          const { exec } = require('child_process');
+          exec('adb shell "cmd battery reset -f" >/dev/null 2>&1', () => {});
+        }
+        broadcastBattery();
+        return;
+      }
+
       // Handle Key events
       if (msg.type === 'key') {
         sendToNative({
@@ -845,6 +931,13 @@ function cleanup() {
   isShuttingDown = true;
   if (nativeRestartTimer) clearTimeout(nativeRestartTimer);
   if (usbMigrateFallbackTimer) clearTimeout(usbMigrateFallbackTimer);
+  if (batteryGuard.active) {
+    try {
+      const { execSync } = require('child_process');
+      execSync('adb shell "cmd battery reset" >/dev/null 2>&1', { timeout: 1000 });
+      console.log('[BatteryGuard] ⚡ Reset tablet battery state on server exit.');
+    } catch (_) {}
+  }
   console.log('\n[Shutdown] Stopping server and native processes...');
   if (nativeProcess) {
     try {
@@ -942,8 +1035,8 @@ function startAdbWatcher() {
     exec('adb shell "settings put global policy_control immersive.full=*" >/dev/null 2>&1', () => {});
     exec('adb shell "settings put global policy_control immersive.navigation=*" >/dev/null 2>&1', () => {});
 
-    // Keep screen awake while connected via USB
-    exec('adb shell "settings put global stay_on_while_plugged_in 7; svc power stayon true" >/dev/null 2>&1', () => {});
+    // Keep screen awake while connected via USB and ensure clean battery state
+    exec('adb shell "settings put global stay_on_while_plugged_in 7; svc power stayon true; cmd battery reset" >/dev/null 2>&1', () => {});
 
     // Sync tablet display refresh rate with current FPS setting
     setTabletHardwareRefreshRate(currentTabletFpsSetting);
@@ -1011,6 +1104,9 @@ function startAdbWatcher() {
           clearTimeout(usbMigrateFallbackTimer);
           usbMigrateFallbackTimer = null;
         }
+        if (batteryGuard.active) {
+          batteryGuard.active = false;
+        }
         if (isAdbReverseActive) {
           console.log('[ADB] 🔌 USB device disconnected (adb error).');
           isAdbReverseActive = false;
@@ -1033,6 +1129,9 @@ function startAdbWatcher() {
         if (usbMigrateFallbackTimer) {
           clearTimeout(usbMigrateFallbackTimer);
           usbMigrateFallbackTimer = null;
+        }
+        if (batteryGuard.active) {
+          batteryGuard.active = false;
         }
         if (isAdbReverseActive) {
           console.log('[ADB] 🔌 USB device disconnected.');
