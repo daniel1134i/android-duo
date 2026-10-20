@@ -7,6 +7,12 @@ APP_DIR="$ROOT_DIR/Android Duo.app"
 
 echo "🔨 Building Android Duo.app..."
 
+# 0. Ensure native binary is built and present
+if [ ! -f "$ROOT_DIR/native/mac_host" ]; then
+    echo "⚙️ Building native host..."
+    (cd "$ROOT_DIR" && npm run build:native)
+fi
+
 # 1. Compile Swift application
 swiftc -O -parse-as-library \
     -target arm64-apple-macos12.3 \
@@ -16,7 +22,7 @@ swiftc -O -parse-as-library \
 # 2. Setup bundle structure
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
-mkdir -p "$APP_DIR/Contents/Resources"
+mkdir -p "$APP_DIR/Contents/Resources/app"
 
 # 3. Move binary
 mv "$SCRIPT_DIR/Android Duo" "$APP_DIR/Contents/MacOS/Android Duo"
@@ -27,8 +33,23 @@ if [ -f "$ROOT_DIR/AppIcon.icns" ]; then
     cp "$ROOT_DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
 
-# 5. Create Info.plist
-cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
+# 5. Bundle standalone backend (server, public, native mac_host, node_modules)
+echo "📦 Bundling standalone application assets..."
+mkdir -p "$APP_DIR/Contents/Resources/app/server"
+mkdir -p "$APP_DIR/Contents/Resources/app/public"
+mkdir -p "$APP_DIR/Contents/Resources/app/native"
+
+cp "$ROOT_DIR/server/index.js" "$APP_DIR/Contents/Resources/app/server/"
+cp -R "$ROOT_DIR/public/"* "$APP_DIR/Contents/Resources/app/public/"
+cp "$ROOT_DIR/native/mac_host" "$APP_DIR/Contents/Resources/app/native/"
+chmod +x "$APP_DIR/Contents/Resources/app/native/mac_host"
+if [ -d "$ROOT_DIR/node_modules" ]; then
+    cp -R "$ROOT_DIR/node_modules" "$APP_DIR/Contents/Resources/app/"
+fi
+cp "$ROOT_DIR/package.json" "$APP_DIR/Contents/Resources/app/"
+
+# 6. Create Info.plist
+cat << EOF > "$APP_DIR/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -59,15 +80,21 @@ cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
 </plist>
 EOF
 
-# 6. Ad-hoc codesign bundle with stable designated requirement so macOS TCC remembers screen recording permissions
-echo "🔏 Signing application binary and bundle with stable designated requirement..."
+# 7. Ad-hoc codesign inner and outer bundles with stable designated requirement
+echo "🔏 Signing application binary and bundle..."
 BUNDLE_ID="com.daniel.androidduo"
+codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/Resources/app/native/mac_host"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR/Contents/MacOS/Android Duo"
 codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "$APP_DIR"
 
-# 7. Ensure application is discoverable in /Applications for macOS System Settings picker
-echo "🔗 Linking to /Applications for System Settings accessibility..."
-ln -sfn "$APP_DIR" "/Applications/Android Duo.app" 2>/dev/null || true
+# 8. Install application into /Applications for macOS Launchpad and System Settings
+echo "📦 Installing Android Duo.app into /Applications..."
+rm -rf "/Applications/Android Duo.app"
+ditto "$APP_DIR" "/Applications/Android Duo.app"
+codesign --force -s - --identifier "$BUNDLE_ID" -r="designated => identifier \"$BUNDLE_ID\"" "/Applications/Android Duo.app"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/Android Duo.app"
+defaults write com.apple.dock ResetLaunchPad -bool true
+killall Dock 2>/dev/null || true
 
 echo "✅ Successfully built and signed: $APP_DIR"
 

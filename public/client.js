@@ -67,14 +67,38 @@
     wakeLockRequested: false,
 
     // Toolbar UI state
-    toolbarExpanded: false
+    toolbarExpanded: false,
+
+    // Power & Screen State
+    isMacAsleep: false,
+    brightness: 1.0
   };
 
   // ============================================================================
-  // DOM Elements
+  // DOM Elements & Rendering Pipeline (OffscreenCanvas Worker + Fallback)
   // ============================================================================
   const canvas = document.getElementById('screen-canvas');
-  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  let renderWorker = null;
+  let isOffscreenSupported = false;
+  let ctx = null;
+
+  if (canvas && typeof canvas.transferControlToOffscreen === 'function' && window.Worker) {
+    try {
+      const offscreen = canvas.transferControlToOffscreen();
+      renderWorker = new Worker('render-worker.js');
+      renderWorker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
+      isOffscreenSupported = true;
+      console.log('[DuoDisplay] 🚀 OffscreenCanvas hardware worker rendering enabled!');
+    } catch (err) {
+      console.warn('[DuoDisplay] transferControlToOffscreen failed, falling back to main-thread canvas:', err);
+      ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+      isOffscreenSupported = false;
+    }
+  } else if (canvas) {
+    ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    isOffscreenSupported = false;
+  }
+
   const canvasContainer = document.getElementById('canvas-container');
   const touchIndicator = document.getElementById('touch-indicator');
   const longpressIndicator = document.getElementById('longpress-indicator');
@@ -117,6 +141,29 @@
   const valFps = document.getElementById('val-fps');
   const valPing = document.getElementById('val-ping');
   const valResolution = document.getElementById('val-resolution');
+
+  // Handle worker metrics (FPS & remote resolution)
+  if (isOffscreenSupported && renderWorker) {
+    renderWorker.onmessage = (e) => {
+      const data = e.data;
+      if (!data) return;
+      if (data.type === 'fps') {
+        state.fps = data.fps;
+        if (valFps) valFps.textContent = state.fps;
+        if (pillFps) {
+          pillFps.textContent = state.fps > 0 ? `${state.fps} FPS` : '0 FPS';
+        }
+      } else if (data.type === 'resolution') {
+        if (data.width !== state.remoteWidth || data.height !== state.remoteHeight) {
+          state.remoteWidth = data.width;
+          state.remoteHeight = data.height;
+          if (valResolution) valResolution.textContent = `${data.width}x${data.height}`;
+          if (pillRes) pillRes.textContent = `${data.width}×${data.height}`;
+          resizeCanvas();
+        }
+      }
+    };
+  }
 
   // Control Selectors
   const modeSelector = document.getElementById('mode-selector');
@@ -297,40 +344,167 @@
     }
   }
 
-  function upgradeToUsb(port) {
+  let isMigratingToUsb = false;
+  let lastUsbMigrationAttempt = 0;
+
+  function migrateToUsb(port, forceRedirect = false) {
     const targetPort = port || state.serverPort || 3000;
-    const usbHost = `127.0.0.1:${targetPort}`;
-    const isCurrentHostUsb = state.activeHost.startsWith('127.0.0.1') || state.activeHost.startsWith('localhost');
-    const isLocationUsb = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+    const isCurrentHostUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
+    if (state.connected && isCurrentHostUsb) {
+      return; // Already streaming via USB
+    }
 
-    if (state.connected && isCurrentHostUsb && isLocationUsb) {
+    const now = Date.now();
+    if (isMigratingToUsb && (now - lastUsbMigrationAttempt < 800)) {
+      return;
+    }
+    isMigratingToUsb = true;
+    lastUsbMigrationAttempt = now;
+
+    const isWifiOrigin = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+
+    if (forceRedirect && isWifiOrigin) {
+      console.log(`[DuoDisplay] Explicit redirect to USB: http://localhost:${targetPort}/?pwa=1`);
+      isMigratingToUsb = false;
+      window.location.replace(`http://localhost:${targetPort}/?pwa=1`);
       return;
     }
 
-    console.log(`[DuoDisplay] Upgrading connection to Zero-Latency USB (${usbHost})...`);
-    showToast('⚡ USB подключен — Переключение на сверхбыстрый USB-канал');
+    // Try loopback hosts: 127.0.0.1 FIRST (bypasses Android DNS & IPv6 delays), then localhost
+    const candidatesToTry = ['127.0.0.1', 'localhost'];
 
-    // If currently loaded from a Wi-Fi address (192.168.x.x), Chrome's Private Network Access
-    // policy blocks cross-network subresources and WebSockets to 127.0.0.1.
-    // Top-level location.replace cleanly moves the page origin to 127.0.0.1 with zero PNA/CORS issues.
-    if (!isLocationUsb) {
-      const usbUrl = `http://${usbHost}/?pwa=1`;
-      window.location.replace(usbUrl);
-      return;
+    function tryConnectCandidate(index) {
+      if (index >= candidatesToTry.length) {
+        console.warn('[DuoDisplay] All USB WebSocket candidates failed or blocked.');
+        isMigratingToUsb = false;
+        if (isWifiOrigin) {
+          console.log(`[DuoDisplay] In-page migration blocked on Wi-Fi origin. Redirecting to http://localhost:${targetPort}/?pwa=1`);
+          window.location.replace(`http://localhost:${targetPort}/?pwa=1`);
+        }
+        return;
+      }
+
+      const host = candidatesToTry[index];
+      const targetHost = `${host}:${targetPort}`;
+      console.log(`[DuoDisplay] Attempting seamless USB migration via ws://${targetHost}/ws...`);
+
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      let candidateWs = null;
+
+      try {
+        candidateWs = new WebSocket(`${protocol}//${targetHost}/ws`);
+        candidateWs.binaryType = 'arraybuffer';
+      } catch (err) {
+        console.warn(`[DuoDisplay] WebSocket instantiation to ${targetHost} failed:`, err);
+        tryConnectCandidate(index + 1);
+        return;
+      }
+
+      let settled = false;
+      const timeoutId = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          console.warn(`[DuoDisplay] USB migration to ${targetHost} timed out.`);
+          try { candidateWs.close(); } catch (_) {}
+          tryConnectCandidate(index + 1);
+        }
+      }, 700);
+
+      candidateWs.onopen = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        console.log(`[DuoDisplay] ⚡ Seamless USB migration successful via ${targetHost}!`);
+
+        // Cleanly close previous Wi-Fi connection
+        const oldWs = state.ws;
+        if (oldWs) {
+          oldWs.onclose = null;
+          oldWs.onerror = null;
+          try { oldWs.close(); } catch (_) {}
+        }
+
+        // Attach active handlers to new USB socket
+        state.ws = candidateWs;
+        state.activeHost = targetHost;
+        state.connected = true;
+        state.reconnectAttempts = 0;
+
+        // Preserve Wi-Fi candidates directly after USB
+        const wifiIps = state.wifiIps || [];
+        const wifiHosts = wifiIps.map(ip => `${ip}:${targetPort}`);
+        const existingNonUsb = state.candidateHosts.filter(h => !h.startsWith('localhost') && !h.startsWith('127.0.0.1'));
+        const wifiCandidates = [...new Set([...existingNonUsb, ...wifiHosts])];
+        state.candidateHosts = [targetHost, `localhost:${targetPort}`, ...wifiCandidates];
+        state.candidateIndex = 0;
+
+        candidateWs.onmessage = handleWsMessage;
+        candidateWs.onclose = handleWsClose;
+        candidateWs.onerror = handleWsError;
+
+        updateTransportUI('usb', targetHost);
+        updateConnectionUI('connected');
+        showToast('⚡ Переключено на USB (минимальная задержка)');
+
+        // Start heartbeat & send config
+        startPingInterval();
+        sendClientConfig();
+        sendJson({ type: 'request_frame' });
+
+        isMigratingToUsb = false;
+      };
+
+      candidateWs.onerror = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        console.warn(`[DuoDisplay] USB candidate ${targetHost} connection error:`, err);
+        try { candidateWs.close(); } catch (_) {}
+        tryConnectCandidate(index + 1);
+      };
     }
 
-    if (state.ws) {
-      state.ws.onclose = null;
-      state.ws.onerror = null;
-      try { state.ws.close(); } catch (_) {}
-      state.ws = null;
-    }
-    initWebSocket(usbHost);
+    tryConnectCandidate(0);
+  }
+
+  function upgradeToUsb(port) {
+    migrateToUsb(port);
   }
 
   function switchToUsb() {
-    upgradeToUsb(state.serverPort);
+    migrateToUsb(state.serverPort, true);
   }
+
+  // Periodic background probe to detect USB cable reconnection while streaming over Wi-Fi
+  setInterval(() => {
+    if (state.connected) {
+      const isUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
+      if (!isUsb) {
+        const port = state.serverPort || 3000;
+        const controller = new AbortController();
+        const tId = setTimeout(() => controller.abort(), 600);
+
+        // Always probe 127.0.0.1 directly to bypass Android DNS and IPv6 latency
+        fetch(`http://127.0.0.1:${port}/api/info`, {
+          method: 'GET',
+          mode: 'cors',
+          signal: controller.signal
+        }).then(res => {
+          clearTimeout(tId);
+          if (res.ok) {
+            return res.json();
+          }
+        }).then(data => {
+          if (data && (data.adbReverseActive || data.adbConnected || data.port)) {
+            console.log('[DuoDisplay] USB tunnel reachable via probe! Triggering migration to USB...');
+            migrateToUsb(port);
+          }
+        }).catch(() => {
+          clearTimeout(tId);
+        });
+      }
+    }
+  }, 1200);
 
   function initWebSocket(preferredHost) {
     if (state.ws && (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING)) {
@@ -392,20 +566,43 @@
     console.log(`[DuoDisplay] Connected to macOS stream server via ${state.activeHost}`);
     state.connected = true;
     state.reconnectAttempts = 0;
+    state.isMacAsleep = false;
+    const sleepCurtain = document.getElementById('sleep-curtain');
+    if (sleepCurtain) {
+      sleepCurtain.classList.add('hidden');
+    }
+    if (canvas) {
+      const b = (state.brightness !== undefined) ? state.brightness : 1.0;
+      canvas.style.filter = `brightness(${0.35 + b * 0.65})`;
+    }
     updateConnectionUI('connected');
 
     const isUsb = state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1');
-    updateTransportUI(isUsb ? 'usb' : 'wifi', state.activeHost);
+    const newTransport = isUsb ? 'usb' : 'wifi';
+    const oldTransport = state.transport;
+    updateTransportUI(newTransport, state.activeHost);
+
+    if (oldTransport && oldTransport !== newTransport) {
+      if (newTransport === 'usb') {
+        showToast('⚡ Переключено на USB (минимальная задержка)');
+      } else {
+        showToast('📶 Переключено на Wi-Fi');
+      }
+    } else {
+      if (isUsb) {
+        showToast('⚡ Подключено по USB (0 мс)');
+      } else {
+        showToast(`📶 Подключено по Wi-Fi (${state.activeHost.split(':')[0]})`);
+      }
+    }
 
     if (isUsb) {
-      showToast('⚡ Подключено по USB (0 мс)');
       try {
         if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
           history.replaceState(null, '', `http://${state.activeHost}/`);
         }
       } catch (_) {}
     } else {
-      showToast(`📶 Подключено по Wi-Fi (${state.activeHost.split(':')[0]})`);
       // Update browser URL so page refresh stays on Wi-Fi without dying
       try {
         if (location.host === state.activeHost) {
@@ -446,21 +643,20 @@
 
     // Instant failover if USB cable was yanked while connected
     const wasUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
-    if (wasConnected && wasUsb && state.candidateHosts.length > 1) {
-      console.log('[DuoDisplay] USB disconnected! Instantly failing over to Wi-Fi...');
-      showToast('⚡ USB unplugged — Continuing over Wi-Fi...');
+    if (wasConnected && wasUsb) {
+      updateCandidateHosts();
       const wifiCandidateIdx = state.candidateHosts.findIndex(h => !h.startsWith('localhost') && !h.startsWith('127.0.0.1'));
       if (wifiCandidateIdx !== -1) {
+        console.log('[DuoDisplay] USB disconnected! Instantly failing over to Wi-Fi...');
+        showToast('📶 Переключено на Wi-Fi');
         state.candidateIndex = wifiCandidateIdx;
-      } else {
-        state.candidateIndex = (state.candidateIndex + 1) % state.candidateHosts.length;
+        if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = setTimeout(() => {
+          state.reconnectTimer = null;
+          initWebSocket();
+        }, 100);
+        return;
       }
-      if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-      state.reconnectTimer = setTimeout(() => {
-        state.reconnectTimer = null;
-        initWebSocket();
-      }, 150);
-      return;
     }
 
     scheduleReconnect();
@@ -520,6 +716,7 @@
   }
 
   function sendClientConfig() {
+    const isUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
     sendJson({
       type: 'settings',
       quality: state.quality,
@@ -527,6 +724,8 @@
       targetFps: state.targetFps,
       scaleMode: state.scaleMode,
       displayId: state.selectedDisplay,
+      host: state.activeHost,
+      isUsb: isUsb,
       clientResolution: {
         width: Math.round(window.innerWidth * (window.devicePixelRatio || 1)),
         height: Math.round(window.innerHeight * (window.devicePixelRatio || 1))
@@ -536,11 +735,23 @@
 
   function handleControlMessage(msg) {
     switch (msg.type) {
-      case 'usb_connected':
-        if (state.activeHost && !state.activeHost.startsWith('localhost') && !state.activeHost.startsWith('127.0.0.1')) {
-          console.log('[DuoDisplay] Server notified USB reverse tunnel is ready. Upgrading to USB...');
-          upgradeToUsb(msg.port || state.serverPort);
+      case 'usb_status':
+        if (msg.available) {
+          console.log('[DuoDisplay] Server notified USB reverse tunnel is ready (usb_status). Migrating to USB...');
+          migrateToUsb(msg.port || state.serverPort);
+        } else {
+          console.log('[DuoDisplay] Server notified USB tunnel unavailable (usb_status).');
         }
+        break;
+
+      case 'usb_connected':
+        console.log('[DuoDisplay] Server notified USB reverse tunnel is ready (usb_connected). Migrating to USB...');
+        migrateToUsb(msg.port || state.serverPort);
+        break;
+
+      case 'switch_to_usb':
+        console.log('[DuoDisplay] Server commanded immediate switch to USB (switch_to_usb).');
+        migrateToUsb(msg.port || state.serverPort, !!msg.force);
         break;
 
       case 'pong':
@@ -550,12 +761,20 @@
           valPing.textContent = state.latency;
           pillPing.textContent = `${state.latency} ms`;
         }
+        if (msg.usbAvailable) {
+          const isCurrentUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
+          if (!isCurrentUsb) {
+            console.log('[DuoDisplay] Pong indicated USB available while on Wi-Fi. Migrating...');
+            migrateToUsb(state.serverPort);
+          }
+        }
         break;
 
       case 'init':
-        if (msg.wifiIps && Array.isArray(msg.wifiIps)) {
-          state.wifiIps = msg.wifiIps;
-          try { localStorage.setItem('duo_wifi_ips', JSON.stringify(msg.wifiIps)); } catch (_) {}
+        const incomingIps = msg.serverIps || msg.wifiIps;
+        if (incomingIps && Array.isArray(incomingIps)) {
+          state.wifiIps = incomingIps;
+          try { localStorage.setItem('duo_wifi_ips', JSON.stringify(incomingIps)); } catch (_) {}
         }
         if (msg.port) {
           state.serverPort = msg.port;
@@ -563,11 +782,31 @@
         }
         updateCandidateHosts();
 
-        // If server informs USB reverse tunnel is active and client is currently on Wi-Fi, upgrade immediately!
-        if (msg.usbAvailable && !state.activeHost.startsWith('127.0.0.1') && !state.activeHost.startsWith('localhost')) {
-          console.log('[DuoDisplay] USB reverse tunnel detected on init. Upgrading to USB...');
-          upgradeToUsb(msg.port || state.serverPort);
+        // If server informs USB reverse tunnel is active and client is currently on Wi-Fi, migrate immediately!
+        const isUsbCurrent = state.activeHost && (state.activeHost.startsWith('127.0.0.1') || state.activeHost.startsWith('localhost'));
+        if ((msg.usbAvailable || msg.adbReverseActive) && !isUsbCurrent) {
+          console.log('[DuoDisplay] USB reverse tunnel detected on init. Migrating to USB...');
+          migrateToUsb(msg.port || state.serverPort);
           return;
+        }
+        if (msg.brightness !== undefined) {
+          updateBrightnessUI(msg.brightness);
+        }
+        if (msg.isMacAsleep !== undefined) {
+          state.isMacAsleep = !!msg.isMacAsleep;
+          const sleepCurtain = document.getElementById('sleep-curtain');
+          if (sleepCurtain) {
+            if (state.isMacAsleep) sleepCurtain.classList.remove('hidden');
+            else sleepCurtain.classList.add('hidden');
+          }
+        } else {
+          state.isMacAsleep = false;
+          const sleepCurtain = document.getElementById('sleep-curtain');
+          if (sleepCurtain) sleepCurtain.classList.add('hidden');
+        }
+        if (!state.isMacAsleep && canvas) {
+          const b = (state.brightness !== undefined) ? state.brightness : 1.0;
+          canvas.style.filter = `brightness(${0.35 + b * 0.65})`;
         }
         // Fallthrough to display_info
       case 'display_info':
@@ -611,10 +850,20 @@
         break;
 
       case 'mac_state':
-        if (msg.state === 'sleep' || msg.state === 'lock') {
-          console.log('[DuoDisplay] 🌙 Mac entered sleep/lock state. Blanking display & releasing WakeLock...');
+        if (msg.state === 'sleep') {
+          console.log('[DuoDisplay] 🌙 Mac entered sleep state. Blanking display & releasing WakeLock...');
           state.isMacAsleep = true;
           releaseWakeLock();
+          if (renderWorker) {
+            renderWorker.postMessage({ type: 'power', state: 'sleep' });
+          }
+          const sleepCurtain = document.getElementById('sleep-curtain');
+          if (sleepCurtain) {
+            sleepCurtain.classList.remove('hidden');
+          }
+          if (canvas) {
+            canvas.style.filter = 'brightness(0)';
+          }
           if (ctx && canvas) {
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -622,7 +871,22 @@
         } else if (msg.state === 'wake' || msg.state === 'unlock') {
           console.log('[DuoDisplay] ☀️ Mac woke up / unlocked. Resuming stream...');
           state.isMacAsleep = false;
+          if (renderWorker) {
+            renderWorker.postMessage({ type: 'power', state: 'wake' });
+          }
+          const sleepCurtain = document.getElementById('sleep-curtain');
+          if (sleepCurtain) {
+            sleepCurtain.classList.add('hidden');
+          }
+          if (canvas) {
+            const b = (state.brightness !== undefined) ? state.brightness : 1.0;
+            canvas.style.filter = `brightness(${0.35 + b * 0.65})`;
+          }
+          if (state.brightness !== undefined) {
+            updateBrightnessUI(state.brightness);
+          }
           autoActivateInteraction();
+          requestWakeLock();
           sendJson({ type: 'request_frame' });
         }
         break;
@@ -742,13 +1006,14 @@
   }
 
   function updateBrightnessUI(val) {
-    state.brightness = val;
-    const pct = Math.round(val * 100);
+    if (typeof val !== 'number' || isNaN(val)) return;
+    state.brightness = Math.max(0.05, Math.min(1.0, val));
+    const pct = Math.round(state.brightness * 100);
     if (sliderBrightness) sliderBrightness.value = pct;
     if (valBrightness) valBrightness.textContent = `${pct}%`;
-    // Visual adjustment for screen
-    if (canvas) {
-      canvas.style.filter = `brightness(${0.35 + val * 0.65})`;
+    // Visual adjustment for screen (only if not asleep)
+    if (canvas && !state.isMacAsleep) {
+      canvas.style.filter = `brightness(${0.35 + state.brightness * 0.65})`;
     }
   }
 
@@ -804,6 +1069,23 @@
   // ============================================================================
   function handleBinaryFrame(buffer) {
     if (!buffer || buffer.byteLength < 2) return;
+    if (state.isMacAsleep) return;
+
+    const sleepCurtain = document.getElementById('sleep-curtain');
+    if (sleepCurtain && !sleepCurtain.classList.contains('hidden')) {
+      sleepCurtain.classList.add('hidden');
+    }
+    if (canvas && (!canvas.style.filter || canvas.style.filter.includes('brightness(0)'))) {
+      const b = (state.brightness !== undefined) ? state.brightness : 1.0;
+      canvas.style.filter = `brightness(${0.35 + b * 0.65})`;
+    }
+
+    // Offload decoding & rendering to dedicated Web Worker with zero-copy transfer
+    if (isOffscreenSupported && renderWorker) {
+      renderWorker.postMessage({ type: 'frame', buffer: buffer }, [buffer]);
+      return;
+    }
+
     const view = new DataView(buffer);
     if (view.getUint8(0) === 0x01) {
       // JPEG Packet (prefixed with 0x01)
@@ -824,7 +1106,20 @@
   let lastRenderedBitmap = null;
 
   async function handleJpegBuffer(buffer) {
+    if (state.isMacAsleep) {
+      // Mac is asleep or lid is closed: preserve blackout curtain, do not decode frames!
+      return;
+    }
     latestPendingJpegBuffer = buffer;
+
+    const sleepCurtain = document.getElementById('sleep-curtain');
+    if (sleepCurtain && !sleepCurtain.classList.contains('hidden')) {
+      sleepCurtain.classList.add('hidden');
+    }
+    if (canvas && (!canvas.style.filter || canvas.style.filter.includes('brightness(0)'))) {
+      const b = (state.brightness !== undefined) ? state.brightness : 1.0;
+      canvas.style.filter = `brightness(${0.35 + b * 0.65})`;
+    }
 
     if (isDecodingJpeg) {
       // Decode loop will pick up latestPendingJpegBuffer on next cycle
@@ -861,9 +1156,9 @@
     isDecodingJpeg = false;
   }
 
-  // Periodic FPS calculator ensuring FPS never freezes on -- or stale values when screen is static
+  // Periodic FPS calculator ensuring FPS never freezes on -- or stale values when screen is static (fallback mode)
   setInterval(() => {
-    if (state.connected) {
+    if (state.connected && !isOffscreenSupported) {
       const now = performance.now();
       const elapsed = now - state.lastFpsUpdateTime;
       if (elapsed >= 1000) {
@@ -872,7 +1167,7 @@
         state.lastFpsUpdateTime = now;
         if (valFps) valFps.textContent = state.fps;
         if (pillFps) {
-          pillFps.textContent = state.fps > 0 ? `${state.fps} FPS` : `${state.targetFps || 60} FPS`;
+          pillFps.textContent = state.fps > 0 ? `${state.fps} FPS` : '0 FPS';
         }
       }
     }
@@ -909,6 +1204,14 @@
     isRenderRafScheduled = false;
 
     if (!pendingRenderBitmap) return;
+
+    if (state.isMacAsleep) {
+      state.isMacAsleep = false;
+      const sleepCurtain = document.getElementById('sleep-curtain');
+      if (sleepCurtain && !sleepCurtain.classList.contains('hidden')) {
+        sleepCurtain.classList.add('hidden');
+      }
+    }
 
     const bitmap = pendingRenderBitmap;
     pendingRenderBitmap = null;
@@ -981,31 +1284,45 @@
       }
     }
 
-    if (canvas.width !== targetW || canvas.height !== targetH) {
-      canvas.width = targetW;
-      canvas.height = targetH;
+    if (!isOffscreenSupported) {
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
     }
     canvas.style.width = `${screenW}px`;
     canvas.style.height = `${screenH}px`;
 
-    computeRenderMetrics(canvas.width, canvas.height);
+    computeRenderMetrics(targetW, targetH);
 
-    // Configure image smoothing: disable when 1:1 for crisp pixel rendering and fast GPU blit
-    updateImageSmoothing(canvas.width, canvas.height, remoteW, remoteH);
+    if (isOffscreenSupported && renderWorker) {
+      renderWorker.postMessage({
+        type: 'resize',
+        width: targetW,
+        height: targetH,
+        scaleMode: state.scaleMode,
+        renderMetrics: state.renderMetrics,
+        remoteWidth: remoteW,
+        remoteHeight: remoteH
+      });
+    } else if (ctx) {
+      // Configure image smoothing: disable when 1:1 for crisp pixel rendering and fast GPU blit
+      updateImageSmoothing(targetW, targetH, remoteW, remoteH);
 
-    // Re-draw last bitmap immediately to avoid black screen on resize / fullscreen
-    if (lastRenderedBitmap) {
-      if (state.scaleMode === 'fill') {
-        updateImageSmoothing(canvas.width, canvas.height, lastRenderedBitmap.width, lastRenderedBitmap.height);
-        ctx.drawImage(lastRenderedBitmap, 0, 0, canvas.width, canvas.height);
-      } else {
-        const { renderWidth, renderHeight, offsetX, offsetY } = state.renderMetrics;
-        if (offsetX > 0 || offsetY > 0) {
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Re-draw last bitmap immediately to avoid black screen on resize / fullscreen
+      if (lastRenderedBitmap) {
+        if (state.scaleMode === 'fill') {
+          updateImageSmoothing(targetW, targetH, lastRenderedBitmap.width, lastRenderedBitmap.height);
+          ctx.drawImage(lastRenderedBitmap, 0, 0, targetW, targetH);
+        } else {
+          const { renderWidth, renderHeight, offsetX, offsetY } = state.renderMetrics;
+          if (offsetX > 0 || offsetY > 0) {
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, targetW, targetH);
+          }
+          updateImageSmoothing(renderWidth, renderHeight, lastRenderedBitmap.width, lastRenderedBitmap.height);
+          ctx.drawImage(lastRenderedBitmap, offsetX, offsetY, renderWidth, renderHeight);
         }
-        updateImageSmoothing(renderWidth, renderHeight, lastRenderedBitmap.width, lastRenderedBitmap.height);
-        ctx.drawImage(lastRenderedBitmap, offsetX, offsetY, renderWidth, renderHeight);
       }
     }
   }
@@ -1833,13 +2150,177 @@
   }
 
   function setupToolbarUI() {
-    // Pill and Panel collapse / expand
-    toolbarPill.addEventListener('click', () => toggleToolbar());
+    // Toolbar Position Management (Top/Bottom, Left/Center/Right)
+    const validPositions = ['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'];
+    
+    function setToolbarPosition(pos, save = true) {
+      if (!validPositions.includes(pos)) pos = 'top-center';
+      validPositions.forEach(p => floatingToolbar.classList.remove(`pos-${p}`));
+      floatingToolbar.classList.add(`pos-${pos}`);
+      floatingToolbar.style.transform = '';
+
+      const pillPosSelector = document.getElementById('pill-pos-selector');
+      if (pillPosSelector) {
+        pillPosSelector.querySelectorAll('.segment-btn').forEach(b => {
+          b.classList.toggle('active', b.getAttribute('data-pos') === pos);
+        });
+      }
+
+      if (save) {
+        try { localStorage.setItem('duo_pill_position', pos); } catch (_) {}
+      }
+    }
+
+    // Restore saved position
+    const savedPillPos = localStorage.getItem('duo_pill_position') || 'top-center';
+    setToolbarPosition(savedPillPos, false);
+
+    const pillPosSelector = document.getElementById('pill-pos-selector');
+    if (pillPosSelector) {
+      pillPosSelector.addEventListener('click', (e) => {
+        const btn = e.target.closest('.segment-btn');
+        if (!btn) return;
+        const pos = btn.getAttribute('data-pos');
+        if (pos) {
+          setToolbarPosition(pos);
+          const labels = {
+            'top-left': 'Верх Слева',
+            'top-center': 'Сверху Центр',
+            'top-right': 'Верх Справа',
+            'bottom-left': 'Низ Слева',
+            'bottom-center': 'Снизу Центр',
+            'bottom-right': 'Низ Справа'
+          };
+          showToast(`Позиция плашки: ${labels[pos] || pos}`);
+        }
+      });
+    }
+
+    // Pill Lock state (prevent accidental dragging)
+    let isPillLocked = localStorage.getItem('duo_pill_locked') === 'true';
+
+    function updatePillLockUI() {
+      const lockBtn = document.getElementById('btn-pill-lock');
+      const lockIcon = document.getElementById('pill-lock-icon');
+      const lockLabel = document.getElementById('pill-lock-label');
+      if (isPillLocked) {
+        floatingToolbar.classList.add('pill-locked');
+        if (lockBtn) lockBtn.classList.add('locked');
+        if (lockIcon) lockIcon.textContent = '🔒';
+        if (lockLabel) lockLabel.textContent = 'Зафиксировано';
+      } else {
+        floatingToolbar.classList.remove('pill-locked');
+        if (lockBtn) lockBtn.classList.remove('locked');
+        if (lockIcon) lockIcon.textContent = '🔓';
+        if (lockLabel) lockLabel.textContent = 'Свободно';
+      }
+    }
+    updatePillLockUI();
+
+    const btnPillLock = document.getElementById('btn-pill-lock');
+    if (btnPillLock) {
+      btnPillLock.addEventListener('click', () => {
+        isPillLocked = !isPillLocked;
+        try { localStorage.setItem('duo_pill_locked', isPillLocked ? 'true' : 'false'); } catch (_) {}
+        updatePillLockUI();
+        triggerVibrate(20);
+        showToast(isPillLocked ? '🔒 Положение плашки зафиксировано' : '🔓 Перетаскивание плашки включено');
+      });
+    }
+
+    // Touch drag support for Pill
+    let pillTouchStartX = 0;
+    let pillTouchStartY = 0;
+    let pillMoved = false;
+
+    toolbarPill.addEventListener('touchstart', (e) => {
+      if (isPillLocked) return;
+      const touch = e.touches[0];
+      pillTouchStartX = touch.clientX;
+      pillTouchStartY = touch.clientY;
+      pillMoved = false;
+    }, { passive: true });
+
+    toolbarPill.addEventListener('touchmove', (e) => {
+      if (isPillLocked) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - pillTouchStartX;
+      const dy = touch.clientY - pillTouchStartY;
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        pillMoved = true;
+        floatingToolbar.style.transform = `translate(${dx}px, ${dy}px)`;
+      }
+    }, { passive: true });
+
+    toolbarPill.addEventListener('touchend', (e) => {
+      if (isPillLocked) return;
+      if (pillMoved) {
+        floatingToolbar.style.transform = '';
+        const endTouch = e.changedTouches[0];
+        const x = endTouch ? endTouch.clientX : pillTouchStartX;
+        const y = endTouch ? endTouch.clientY : pillTouchStartY;
+
+        const isBottom = y > window.innerHeight / 2;
+        let hPos = 'center';
+        if (x < window.innerWidth * 0.33) {
+          hPos = 'left';
+        } else if (x > window.innerWidth * 0.67) {
+          hPos = 'right';
+        }
+        const targetPos = `${isBottom ? 'bottom' : 'top'}-${hPos}`;
+        setToolbarPosition(targetPos);
+        triggerVibrate(20);
+        const labels = {
+          'top-left': 'Верх Слева',
+          'top-center': 'Сверху Центр',
+          'top-right': 'Верх Справа',
+          'bottom-left': 'Низ Слева',
+          'bottom-center': 'Снизу Центр',
+          'bottom-right': 'Низ Справа'
+        };
+        showToast(`Позиция плашки: ${labels[targetPos] || targetPos}`);
+      }
+      pillMoved = false;
+    });
+
+    toolbarPill.addEventListener('touchcancel', () => {
+      pillMoved = false;
+      floatingToolbar.style.transform = '';
+    });
+
+    toolbarPill.addEventListener('click', (e) => {
+      if (pillMoved) {
+        e.preventDefault();
+        e.stopPropagation();
+        pillMoved = false;
+        return;
+      }
+      toggleToolbar();
+    });
+
     btnExpandToolbar.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleToolbar();
     });
-    btnCollapseToolbar.addEventListener('click', () => toggleToolbar());
+    btnCollapseToolbar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleToolbar();
+    });
+
+    // Tap outside to close panel
+    document.addEventListener('pointerdown', (e) => {
+      if (!state.toolbarExpanded) return;
+      if (!floatingToolbar.contains(e.target)) {
+        toggleToolbar();
+      }
+    });
+
+    // Escape key to close panel
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.toolbarExpanded) {
+        toggleToolbar();
+      }
+    });
 
     function setTouchEnabled(enabled, requestedMode) {
       state.touchEnabled = enabled;
@@ -1973,6 +2454,7 @@
 
     // Sticky Modifier Toggles (Cmd, Opt, Ctrl, Shift)
     const setupModifierToggle = (button, modKey) => {
+      if (!button) return;
       button.addEventListener('click', () => {
         state.modifiers[modKey] = !state.modifiers[modKey];
         if (state.modifiers[modKey]) {
@@ -1984,10 +2466,10 @@
       });
     };
 
-    setupModifierToggle(modCmd, 'cmd');
-    setupModifierToggle(modOpt, 'opt');
-    setupModifierToggle(modCtrl, 'ctrl');
-    setupModifierToggle(modShift, 'shift');
+    if (modCmd) setupModifierToggle(modCmd, 'cmd');
+    if (modOpt) setupModifierToggle(modOpt, 'opt');
+    if (modCtrl) setupModifierToggle(modCtrl, 'ctrl');
+    if (modShift) setupModifierToggle(modShift, 'shift');
 
     // Quick Utility Keys
     document.querySelectorAll('.key-btn').forEach(btn => {
@@ -2032,6 +2514,22 @@
       pillPwaChip.addEventListener('click', (e) => {
         e.stopPropagation();
         triggerPwaInstall();
+      });
+    }
+
+    // Manual Transport Switch on Pill Tap
+    if (pillTransport) {
+      pillTransport.style.cursor = 'pointer';
+      pillTransport.title = 'Нажмите для ручного переключения на USB';
+      pillTransport.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isUsb = state.activeHost && (state.activeHost.startsWith('localhost') || state.activeHost.startsWith('127.0.0.1'));
+        if (!isUsb) {
+          showToast('⚡ Переключение на USB...');
+          migrateToUsb(state.serverPort, true);
+        } else {
+          showToast('⚡ Подключение по USB уже активно');
+        }
       });
     }
 
@@ -2144,6 +2642,7 @@
 
   // Re-acquire WakeLock on visibility change (e.g. tablet screen turned back on)
   document.addEventListener('visibilitychange', async () => {
+    if (state.isMacAsleep) return;
     if (state.wakeLockRequested && document.visibilityState === 'visible') {
       try {
         state.wakeLock = await navigator.wakeLock.request('screen');
@@ -2156,6 +2655,7 @@
 
   // Automatically activate WakeLock to keep screen from going to sleep
   async function autoActivateInteraction() {
+    if (state.isMacAsleep) return;
     if (!state.wakeLock && 'wakeLock' in navigator) {
       try {
         state.wakeLock = await navigator.wakeLock.request('screen');
@@ -2167,6 +2667,7 @@
       }
     }
   }
+  const requestWakeLock = autoActivateInteraction;
   // Try immediate WakeLock request
   autoActivateInteraction();
   document.addEventListener('DOMContentLoaded', autoActivateInteraction);
@@ -2246,6 +2747,45 @@
         batt.addEventListener('levelchange', updateLocalBattery);
         batt.addEventListener('chargingchange', updateLocalBattery);
       }).catch(() => {});
+    }
+
+    // Instant wake & stream resume when tablet screen turns on or PWA comes to foreground
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[DuoDisplay] Tablet screen turned on / PWA foregrounded. Resuming stream...');
+        state.isMacAsleep = false;
+        const sleepCurtain = document.getElementById('sleep-curtain');
+        if (sleepCurtain) sleepCurtain.classList.add('hidden');
+        requestWakeLock();
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+          initWebSocket();
+        } else {
+          sendJson({ type: 'request_frame' });
+        }
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      state.isMacAsleep = false;
+      const sleepCurtain = document.getElementById('sleep-curtain');
+      if (sleepCurtain) sleepCurtain.classList.add('hidden');
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        sendJson({ type: 'request_frame' });
+      }
+    });
+
+    // Tap on black curtain to dismiss it immediately
+    const sleepCurtain = document.getElementById('sleep-curtain');
+    if (sleepCurtain) {
+      const dismissCurtain = () => {
+        state.isMacAsleep = false;
+        sleepCurtain.classList.add('hidden');
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          sendJson({ type: 'request_frame' });
+        }
+      };
+      sleepCurtain.addEventListener('click', dismissCurtain);
+      sleepCurtain.addEventListener('touchstart', dismissCurtain, { passive: true });
     }
   }
 

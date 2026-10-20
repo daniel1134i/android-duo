@@ -5,4 +5,5 @@ native/*.o
 *.log
 *.zip
 Android Duo.app
+*.dmg
 AppIcon.icns

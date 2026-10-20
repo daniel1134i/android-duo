@@ -7,6 +7,7 @@ import CoreVideo
 import ApplicationServices
 import CoreMedia
 import Metal
+import IOKit
 
 // Protocol Magic & Packet Types
 let MAGIC_BYTE: UInt8 = 0xFD
@@ -30,7 +31,11 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
     var targetWidth: Int = 0
     var targetHeight: Int = 0
     var lastFrameDate = Date()
-    private var isCapturing = false
+    var lastSampleBufferDate = Date()
+    var lastSentFrameDate = Date(timeIntervalSince1970: 0)
+    var forceNextFrame = true
+    var isCapturing = false
+    var isPaused = false
     var availableDisplays: [SCDisplay] = []
     
     func writePacket(_ packet: Data) {
@@ -246,7 +251,36 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
     // MARK: - SCStreamOutput
     private var sampleCount: Int = 0
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen else { return }
+        guard type == .screen && !self.isPaused else { return }
+        self.lastSampleBufferDate = Date()
+        
+        // Zero-Load Idle Detection (ScreenCaptureKit SCFrameStatus.idle)
+        var isIdle = false
+        if let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+           let attachments = attachmentsArray.first,
+           let statusRaw = attachments[.status] as? Int,
+           let status = SCFrameStatus(rawValue: statusRaw) {
+            switch status {
+            case .idle:
+                isIdle = true
+            case .blank, .suspended, .stopped:
+                return // Ignore blank/suspended frames
+            case .complete, .started:
+                isIdle = false
+            @unknown default:
+                break
+            }
+        }
+        
+        // If the screen did not change (idle):
+        // Only encode if an interaction was forced or if >= 2.0s passed since the last sent frame
+        let now = Date()
+        if isIdle && !self.forceNextFrame {
+            if now.timeIntervalSince(self.lastSentFrameDate) < 2.0 {
+                return // Zero CPU, zero GPU encoding, zero network traffic!
+            }
+        }
+        
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         
         guard encodeLock.try() else { return }
@@ -262,7 +296,9 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
                 return
             }
             
-            self.lastFrameDate = Date()
+            self.lastFrameDate = now
+            self.lastSentFrameDate = now
+            self.forceNextFrame = false
             
             // Write packet: [MAGIC][TYPE_JPEG][LEN (4 bytes BE)][JPEG DATA]
             var packet = Data(capacity: 6 + jpegData.count)
@@ -276,19 +312,56 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
     
+    private var isRecovering = false
+    
+    func ensureCapturing(force: Bool = false) {
+        if !force && self.isCapturing && Date().timeIntervalSince(self.lastSampleBufferDate) < 5.0 {
+            return
+        }
+        guard !self.isRecovering else { return }
+        self.isRecovering = true
+        Task {
+            defer { self.isRecovering = false }
+            if self.isCapturing || force {
+                await self.stop()
+            }
+            for attempt in 1...5 {
+                do {
+                    fputs("[mac_host] ensureCapturing (attempt \(attempt), force: \(force)): attempting to resume ScreenCaptureKit stream...\n", stderr)
+                    try await self.start(preferredDisplayID: self.currentDisplayID != 0 ? self.currentDisplayID : nil,
+                                         fps: self.targetFPS,
+                                         quality: self.quality)
+                    fputs("[mac_host] ensureCapturing: stream successfully resumed!\n", stderr)
+                    break
+                } catch {
+                    fputs("[mac_host] ensureCapturing attempt \(attempt) failed: \(error.localizedDescription)\n", stderr)
+                    try? await Task.sleep(nanoseconds: 400_000_000) // 400ms
+                }
+            }
+        }
+    }
+    
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        fputs("[mac_host] Stream stopped with error: \(error.localizedDescription). Auto-recovering in 1s...\n", stderr)
+        fputs("[mac_host] Stream stopped with error: \(error.localizedDescription). Scheduling resilient auto-recovery...\n", stderr)
         self.isCapturing = false
         self.stream = nil
         Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            do {
-                try await self.start(preferredDisplayID: self.currentDisplayID != 0 ? self.currentDisplayID : nil,
-                                     fps: self.targetFPS,
-                                     quality: self.quality)
-                fputs("[mac_host] Stream successfully auto-recovered and resumed!\n", stderr)
-            } catch {
-                fputs("[mac_host] Stream auto-recovery failed: \(error.localizedDescription)\n", stderr)
+            var attempt = 1
+            while !self.isCapturing {
+                let delayMs: UInt64 = (attempt <= 10) ? 1_000_000_000 : 3_000_000_000
+                try? await Task.sleep(nanoseconds: delayMs)
+                if self.isCapturing { break }
+                do {
+                    fputs("[mac_host] Stream auto-recovery attempt \(attempt)...\n", stderr)
+                    try await self.start(preferredDisplayID: self.currentDisplayID != 0 ? self.currentDisplayID : nil,
+                                         fps: self.targetFPS,
+                                         quality: self.quality)
+                    fputs("[mac_host] Stream successfully auto-recovered on attempt \(attempt)!\n", stderr)
+                    break
+                } catch {
+                    fputs("[mac_host] Stream recovery attempt \(attempt) failed: \(error.localizedDescription)\n", stderr)
+                }
+                attempt += 1
             }
         }
     }
@@ -533,19 +606,29 @@ final class InputSynthesizer {
     }
 }
 
-// MARK: - Ambient Screen Brightness Monitor
+// MARK: - Ambient Screen Brightness Monitor (CoreDisplay / DisplayServices)
+typealias DisplayServicesGetBrightnessType = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
+
 final class BrightnessMonitor {
     private var lastBrightness: Float = -1.0
+    private var getBrightnessFn: DisplayServicesGetBrightnessType?
+    
+    init() {
+        if let handle = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_LAZY),
+           let sym = dlsym(handle, "DisplayServicesGetBrightness") {
+            getBrightnessFn = unsafeBitCast(sym, to: DisplayServicesGetBrightnessType.self)
+        }
+    }
     
     func check() -> Float? {
         var brightness: Float = 0.5
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IODisplayConnect"))
-        if service != 0 {
-            IODisplayGetFloatParameter(service, 0, kIODisplayBrightnessKey as CFString, &brightness)
-            IOObjectRelease(service)
-            if abs(brightness - lastBrightness) > 0.02 {
-                lastBrightness = brightness
-                return brightness
+        if let fn = getBrightnessFn {
+            let res = fn(CGMainDisplayID(), &brightness)
+            if res == 0 {
+                if lastBrightness < 0 || abs(brightness - lastBrightness) > 0.015 {
+                    lastBrightness = brightness
+                    return brightness
+                }
             }
         }
         return nil
@@ -556,10 +639,22 @@ final class BrightnessMonitor {
 @available(macOS 12.3, *)
 final class PowerStateObserver {
     private let streamer: ScreenStreamer
+    private var lastLidClosed: Bool = false
     private var lastState: String = "wake"
+    private var lidTimer: Timer?
 
     init(streamer: ScreenStreamer) {
         self.streamer = streamer
+    }
+
+    func isLidClosed() -> Bool {
+        let rootDomain = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard rootDomain != 0 else { return false }
+        defer { IOObjectRelease(rootDomain) }
+        if let property = IORegistryEntryCreateCFProperty(rootDomain, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool {
+            return property
+        }
+        return false
     }
 
     func start() {
@@ -577,23 +672,44 @@ final class PowerStateObserver {
             self?.notifyState("wake")
         }
 
-        let dnc = DistributedNotificationCenter.default()
-        dnc.addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
-            self?.notifyState("lock")
-        }
-        dnc.addObserver(forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
-            self?.notifyState("unlock")
+        // Hardware Clamshell (Lid) Watcher - polling every 300ms
+        lastLidClosed = isLidClosed()
+        lidTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let closed = self.isLidClosed()
+            if closed != self.lastLidClosed {
+                self.lastLidClosed = closed
+                if closed {
+                    self.notifyState("sleep")
+                } else {
+                    self.notifyState("wake")
+                }
+            }
         }
     }
 
     private func notifyState(_ state: String) {
+        if state == "wake" && isLidClosed() {
+            fputs("[mac_host] Ignore wake: lid is closed (AppleClamshellState = true)\n", stderr)
+            return
+        }
         if state == lastState { return }
         lastState = state
         fputs("[mac_host] Mac power state event: \(state)\n", stderr)
+        if state == "sleep" {
+            streamer.isPaused = true
+        } else if state == "wake" {
+            streamer.isPaused = false
+        }
         streamer.sendJSON([
             "type": "mac_state",
             "state": state
         ])
+        if state == "wake" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.streamer.ensureCapturing(force: true)
+            }
+        }
     }
 }
 
@@ -700,7 +816,10 @@ struct MacHostApp {
                                     let newQ = (json["quality"] as? NSNumber)?.floatValue
                                     streamer.updateConfig(fps: newFps, quality: newQ)
                                 } else if type == "request_frame" || type == "request_keyframe" {
-                                    // ScreenCaptureKit handles active frames; server sends cached frame
+                                    streamer.forceNextFrame = true
+                                    if !streamer.isCapturing {
+                                        streamer.ensureCapturing()
+                                    }
                                 } else if type == "select_display",
                                           let dId = (json["displayId"] as? NSNumber)?.uint32Value ?? (json["displayId"] as? UInt32) {
                                     Task {
@@ -717,6 +836,7 @@ struct MacHostApp {
                                     let ok = set_virtual_display_position(pos)
                                     fputs("[mac_host] Set display position to \(pos): \(ok)\n", stderr)
                                 } else {
+                                    streamer.forceNextFrame = true
                                     synthesizer.handleCommand(json)
                                 }
                             }

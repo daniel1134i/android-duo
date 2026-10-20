@@ -22,6 +22,9 @@
     <div id="longpress-indicator" class="longpress-indicator"></div>
   </div>
 
+  <!-- Sleep Screen Curtain (Pitch black when Mac is asleep/lid closed) -->
+  <div id="sleep-curtain" class="sleep-curtain hidden"></div>
+
   <!-- Hidden input for summoning Android soft keyboard -->
   <input 
     type="text" 
@@ -36,9 +39,10 @@
   />
 
   <!-- Floating Control Bar -->
-  <div id="floating-toolbar" class="toolbar-collapsed">
+  <div id="floating-toolbar" class="toolbar-collapsed pos-top-center">
     <!-- Collapsed Pill (Mini Status + Toggle) -->
-    <div id="toolbar-pill" class="toolbar-pill" title="Tap to expand controls">
+    <div id="toolbar-pill" class="toolbar-pill" title="Нажмите для настроек или потяните для перемещения">
+      <div class="pill-drag-handle" title="Потяните для перемещения"></div>
       <div class="pill-status-dot" id="pill-status-dot"></div>
       <span class="pill-text" id="pill-transport">⚡ USB</span>
       <span class="pill-divider">·</span>
@@ -168,6 +172,25 @@
         </div>
       </div>
 
+      <!-- Section: Pill / Toolbar Position -->
+      <div class="panel-row">
+        <div class="row-label row-between">
+          <span>ПОЛОЖЕНИЕ ПЛАШКИ</span>
+          <button class="pill-lock-btn" id="btn-pill-lock" title="Зафиксировать плашку (отключить случайное перетаскивание)">
+            <span id="pill-lock-icon">🔓</span>
+            <span id="pill-lock-label">Свободно</span>
+          </button>
+        </div>
+        <div class="segmented-grid" id="pill-pos-selector">
+          <button class="segment-btn" data-pos="top-left">↖ Сверху Слева</button>
+          <button class="segment-btn active" data-pos="top-center">⬆ Сверху Центр</button>
+          <button class="segment-btn" data-pos="top-right">↗ Сверху Справа</button>
+          <button class="segment-btn" data-pos="bottom-left">↙ Снизу Слева</button>
+          <button class="segment-btn" data-pos="bottom-center">⬇ Снизу Центр</button>
+          <button class="segment-btn" data-pos="bottom-right">↘ Снизу Справа</button>
+        </div>
+      </div>
+
       <!-- Section: Display Selector -->
       <div class="panel-row" id="display-row">
         <div class="row-label">МОНИТОР</div>
@@ -179,41 +202,6 @@
         </div>
       </div>
 
-      <!-- Section: Sticky Modifiers -->
-      <div class="panel-row">
-        <div class="row-label">МОДИФИКАТОРЫ</div>
-        <div class="modifiers-bar">
-          <button class="mod-btn" id="mod-cmd" data-mod="cmd">
-            <span class="mod-glyph">⌘</span> Cmd
-          </button>
-          <button class="mod-btn" id="mod-opt" data-mod="opt">
-            <span class="mod-glyph">⌥</span> Opt
-          </button>
-          <button class="mod-btn" id="mod-ctrl" data-mod="ctrl">
-            <span class="mod-glyph">⌃</span> Ctrl
-          </button>
-          <button class="mod-btn" id="mod-shift" data-mod="shift">
-            <span class="mod-glyph">⇧</span> Shift
-          </button>
-        </div>
-      </div>
-
-      <!-- Section: Quick Utility Keys & macOS Shortcuts -->
-      <div class="panel-row">
-        <div class="row-label">БЫСТРЫЕ КЛАВИШИ</div>
-        <div class="quick-keys-grid">
-          <button class="key-btn" data-key="Escape" data-code="Escape" data-mac-keycode="53">Esc</button>
-          <button class="key-btn" data-key="Tab" data-code="Tab" data-mac-keycode="48">Tab</button>
-          <button class="key-btn" data-key=" " data-code="Space" data-mac-keycode="49">Space</button>
-          <button class="key-btn" data-key="Backspace" data-code="Backspace" data-mac-keycode="51">⌫ Del</button>
-          <button class="key-btn key-accent" data-key="Enter" data-code="Enter" data-mac-keycode="36">↵ Enter</button>
-          <button class="key-btn" data-shortcut="cmd+c">⌘C Copy</button>
-          <button class="key-btn" data-shortcut="cmd+v">⌘V Paste</button>
-          <button class="key-btn" data-shortcut="cmd+z">⌘Z Undo</button>
-          <button class="key-btn" data-shortcut="mission_control">⌃↑ Mission</button>
-          <button class="key-btn" data-shortcut="show_desktop">F11 Desktop</button>
-        </div>
-      </div>
 
       <!-- Section: Device & System Tools -->
       <div class="panel-row tools-row">

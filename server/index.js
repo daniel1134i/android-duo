@@ -6,7 +6,7 @@ const { spawn, exec } = require('child_process');
 const { WebSocketServer, WebSocket } = require('ws');
 const qrcode = require('qrcode-terminal');
 
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT, 10) || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const NATIVE_BIN = path.join(__dirname, '..', 'native', 'mac_host');
 let nativeProcess = null;
@@ -51,6 +51,17 @@ function getLocalIPs() {
   return addresses;
 }
 
+// Hardware Clamshell (Lid) State Inspector
+function checkIsLidClosedSync() {
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync('ioreg -r -n IOPMrootDomain | grep -i AppleClamshellState', { timeout: 350 }).toString();
+    return out.includes('Yes');
+  } catch (_) {
+    return false;
+  }
+}
+
 // HTTP Server
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -72,6 +83,7 @@ let lastClientDisconnectTime = 0;
 let isScreenCaptureGranted = null;
 let isAdbDeviceConnected = false;
 let isAdbReverseActive = false;
+let usbMigrateFallbackTimer = null;
 
 function getClientIp(req) {
   let ip = req.socket ? req.socket.remoteAddress : '';
@@ -102,9 +114,27 @@ function setTabletHardwareBrightness(val) {
   if (adbBrightnessTimeout) clearTimeout(adbBrightnessTimeout);
   adbBrightnessTimeout = setTimeout(() => {
     const val255 = Math.round(currentBrightness * 255);
+    const valFloat = currentBrightness.toFixed(3);
     const { exec } = require('child_process');
-    exec(`adb shell settings put system screen_brightness ${val255}`, () => {});
-  }, 100);
+    exec(`adb shell "settings put system screen_brightness ${val255}; settings put system screen_brightness_float ${valFloat}" >/dev/null 2>&1`, () => {});
+  }, 80);
+}
+
+// Tablet Hardware Display Refresh Rate Control (Optimization 5)
+let currentTabletFpsSetting = 90;
+
+function setTabletHardwareRefreshRate(fps) {
+  const target = parseInt(fps, 10) || 90;
+  currentTabletFpsSetting = target;
+  // If target <= 60 FPS, drop hardware display refresh rate to 60 Hz to conserve battery and GPU power.
+  // If target > 60 FPS (e.g. 90 FPS), unlock 90 Hz for ultra-smoothness.
+  const rate = target > 60 ? '90.0' : '60.0';
+  const { exec } = require('child_process');
+  exec(`adb shell "settings put system peak_refresh_rate ${rate}; settings put system min_refresh_rate 60.0" >/dev/null 2>&1`, (err) => {
+    if (!err) {
+      console.log(`[Display] ⚡ Tablet display hardware refresh rate synced: ${rate} Hz (Target FPS: ${target})`);
+    }
+  });
 }
 
 // Battery Monitoring (Mac + Tablet)
@@ -114,6 +144,7 @@ let currentBattery = {
 };
 
 function checkBatteryStatus(callback) {
+  const { exec } = require('child_process');
   // Read Mac battery via pmset
   exec('pmset -g batt', (err, stdout) => {
     if (!err && stdout) {
@@ -200,8 +231,10 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/info') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     const transport = getActiveTransport();
+    const localIps = getLocalIPs();
     res.end(JSON.stringify({
-      ips: getLocalIPs(),
+      ips: localIps,
+      serverIps: localIps.map(i => i.address),
       port: PORT,
       display: currentDisplayInfo,
       battery: currentBattery,
@@ -215,6 +248,61 @@ const server = http.createServer((req, res) => {
         isUsb: !!c.isUsb
       }))
     }));
+    return;
+  }
+
+  // REST API: Power State Control (Sleep / Wake / Lid)
+  if (req.url.startsWith('/api/power')) {
+    const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const state = urlObj.searchParams.get('state');
+    if (state === 'sleep' || state === 'wake' || state === 'unlock') {
+      handleMacPowerStateChange(state);
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, state: state }));
+    return;
+  }
+
+  // REST API: Change Resolution
+  if (req.url.startsWith('/api/resolution')) {
+    const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const width = parseInt(urlObj.searchParams.get('width'), 10);
+    const height = parseInt(urlObj.searchParams.get('height'), 10);
+    if (!isNaN(width) && !isNaN(height) && width > 0 && height > 0) {
+      console.log(`[Display] REST request to change resolution: ${width}x${height}`);
+      currentDisplayInfo.width = width;
+      currentDisplayInfo.height = height;
+      currentDisplayInfo.screenWidth = width;
+      currentDisplayInfo.screenHeight = height;
+      sendToNative({ type: 'set_resolution', width, height });
+      for (const client of wss.clients) {
+        if (client.readyState === WebSocket.OPEN) {
+          try {
+            client.send(JSON.stringify({
+              type: 'display_info',
+              width,
+              height,
+              screenWidth: width,
+              screenHeight: height,
+              fps: currentDisplayInfo.fps || 90
+            }));
+          } catch (_) {}
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, width, height }));
+      return;
+    }
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid width or height' }));
+    return;
+  }
+
+  // REST API: Launch Tablet App
+  if (req.url.startsWith('/api/launch')) {
+    launchTabletApp();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 
@@ -256,6 +344,12 @@ server.on('connection', (socket) => {
 // WebSocket Server for Ultra Low-Latency Stream & Gestures
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+wss.on('headers', (headers, req) => {
+  headers.push('Access-Control-Allow-Origin: *');
+  headers.push('Access-Control-Allow-Headers: *');
+  headers.push('Access-Control-Allow-Private-Network: true');
+});
+
 wss.on('connection', (ws, req) => {
   if (req.socket) {
     req.socket.setNoDelay(true);
@@ -268,6 +362,10 @@ wss.on('connection', (ws, req) => {
   const ip = getClientIp(req);
   ws.clientIp = ip;
   ws.isUsb = isUsbIp(ip);
+  if (ws.isUsb && usbMigrateFallbackTimer) {
+    clearTimeout(usbMigrateFallbackTimer);
+    usbMigrateFallbackTimer = null;
+  }
   console.log(`[WebSocket] Client connected from ${ip} (Channel: ${ws.isUsb ? '⚡ USB' : '📶 Wi-Fi'})`);
 
   // Send initial display info matching client expectations with Wi-Fi fallback IPs
@@ -278,11 +376,15 @@ wss.on('connection', (ws, req) => {
     screenHeight: currentDisplayInfo.height,
     fps: currentDisplayInfo.fps || 60,
     port: PORT,
+    serverIps: localIps.map(i => i.address),
     wifiIps: localIps.map(i => i.address),
     wifiUrls: localIps.map(i => `http://${i.address}:${PORT}`),
     usbAvailable: isAdbReverseActive,
     adbConnected: isAdbDeviceConnected,
+    adbReverseActive: isAdbReverseActive,
     isUsbClient: ws.isUsb,
+    brightness: currentBrightness,
+    isMacAsleep: isMacAsleep,
     displays: currentDisplayInfo.displays || [{
       id: currentDisplayInfo.displayID || 0,
       name: 'macOS Display',
@@ -292,13 +394,25 @@ wss.on('connection', (ws, req) => {
     }]
   }));
 
+  // Explicitly inform client of current power state and immediately supply last frame
+  ws.send(JSON.stringify({ type: 'mac_state', state: isMacAsleep ? 'sleep' : 'wake' }));
+  if (!isMacAsleep && lastJpegFrame) {
+    ws.send(lastJpegFrame, { binary: true });
+  }
+
   // If a client connects from Wi-Fi but USB tunnel is ready, immediately prompt upgrade to USB
   if (!ws.isUsb && isAdbReverseActive) {
     console.log(`[WebSocket] Wi-Fi client (${ip}) connected while USB reverse tunnel is active. Prompting upgrade.`);
     ws.send(JSON.stringify({
+      type: 'usb_status',
+      available: true,
+      port: PORT,
+      localUrl: `http://localhost:${PORT}/?pwa=1`
+    }));
+    ws.send(JSON.stringify({
       type: 'usb_connected',
       port: PORT,
-      url: `http://127.0.0.1:${PORT}/?pwa=1`
+      url: `http://localhost:${PORT}/?pwa=1`
     }));
   }
 
@@ -310,11 +424,6 @@ wss.on('connection', (ws, req) => {
 
   // Send battery status immediately on connection
   broadcastBattery();
-
-  // Trigger browser fullscreen on tablet if supported via keyevent
-  setTimeout(() => {
-    exec('adb shell input keyevent 141 >/dev/null 2>&1', () => {}); // F11 keycode
-  }, 400);
 
   ws.on('message', (message, isBinary) => {
     if (isBinary) return;
@@ -328,19 +437,25 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({
           type: 'pong',
           timestamp: msg.timestamp,
-          serverTime: Date.now()
+          serverTime: Date.now(),
+          usbAvailable: isAdbReverseActive
         }));
         return;
       }
 
-
-
       // Handle dynamic client settings (quality, fps, display switching)
       if (msg.type === 'settings' || msg.type === 'config') {
+        if (msg.isUsb !== undefined) {
+          ws.isUsb = !!msg.isUsb;
+        }
+        if (msg.host) {
+          ws.clientHost = msg.host;
+        }
         const qMap = { low: 0.65, med: 0.80, high: 0.90, ultra: 0.95 };
         const quality = typeof msg.quality === 'string' ? (qMap[msg.quality] || 0.90) : (msg.quality || 0.90);
         const fps = parseInt(msg.targetFps || msg.fps, 10) || 90;
         console.log(`[Settings] Updated by client: FPS=${fps}, Quality=${quality}`);
+        setTabletHardwareRefreshRate(fps);
         sendToNative({ type: 'config', fps, quality });
         if (msg.displayId !== undefined && parseInt(msg.displayId, 10) > 0) {
           sendToNative({ type: 'select_display', displayId: parseInt(msg.displayId, 10) });
@@ -362,7 +477,25 @@ wss.on('connection', (ws, req) => {
         const height = parseInt(msg.height, 10);
         if (width > 0 && height > 0) {
           console.log(`[Display] Client requested resolution: ${width}x${height}`);
+          currentDisplayInfo.width = width;
+          currentDisplayInfo.height = height;
+          currentDisplayInfo.screenWidth = width;
+          currentDisplayInfo.screenHeight = height;
           sendToNative({ type: 'set_resolution', width, height });
+          for (const client of wss.clients) {
+            if (client.readyState === WebSocket.OPEN) {
+              try {
+                client.send(JSON.stringify({
+                  type: 'display_info',
+                  width,
+                  height,
+                  screenWidth: width,
+                  screenHeight: height,
+                  fps: currentDisplayInfo.fps || 90
+                }));
+              } catch (_) {}
+            }
+          }
         }
         return;
       }
@@ -478,6 +611,10 @@ wss.on('connection', (ws, req) => {
 
 // Broadcast JPEG frames to all active clients
 function broadcastJpegFrame(jpegBuffer) {
+  if (isMacAsleep) {
+    // NEVER broadcast screen frames when Mac is asleep or lid is closed!
+    return;
+  }
   lastJpegFrame = jpegBuffer;
 
   // WebSockets: Zero-latency drop-late-frames strategy (128KB allows max 1 queued frame)
@@ -560,11 +697,15 @@ function startNativeHost() {
         try {
           const json = JSON.parse(payload.toString('utf8'));
           if (json.type === 'brightness') {
-            setTabletHardwareBrightness(json.value);
-            // Broadcast brightness to all connected clients
-            for (const client of wss.clients) {
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ type: 'brightness', value: json.value }));
+            const bVal = parseFloat(json.value);
+            if (!isNaN(bVal)) {
+              currentBrightness = Math.max(0.05, Math.min(1.0, bVal));
+              setTabletHardwareBrightness(currentBrightness);
+              // Broadcast brightness to all connected clients
+              for (const client of wss.clients) {
+                if (client.readyState === WebSocket.OPEN) {
+                  client.send(JSON.stringify({ type: 'brightness', value: currentBrightness }));
+                }
               }
             }
           } else if (json.type === 'display_info') {
@@ -646,102 +787,268 @@ function superviseNativeHost(isPermissionError = false) {
 }
 
 // Cleanup on shutdown
+let isCleaningUp = false;
 function cleanup() {
+  if (isCleaningUp) return;
+  isCleaningUp = true;
   isShuttingDown = true;
   if (nativeRestartTimer) clearTimeout(nativeRestartTimer);
+  if (usbMigrateFallbackTimer) clearTimeout(usbMigrateFallbackTimer);
   console.log('\n[Shutdown] Stopping server and native processes...');
   if (nativeProcess) {
-    nativeProcess.kill('SIGINT');
+    try {
+      nativeProcess.kill('SIGKILL');
+    } catch (e) {}
     nativeProcess = null;
   }
-  wss.close();
-  server.close(() => {
-    console.log('[Shutdown] Server stopped successfully.');
+  // Hard exit timeout after 200ms in case sockets don't close
+  const forceExitTimer = setTimeout(() => {
     process.exit(0);
-  });
+  }, 200);
+  if (forceExitTimer.unref) forceExitTimer.unref();
+
+  try {
+    if (wss && wss.clients) {
+      for (const client of wss.clients) {
+        try { client.terminate(); } catch (e) {}
+      }
+      wss.close();
+    }
+  } catch (e) {}
+
+  try {
+    if (typeof server.closeAllConnections === 'function') {
+      server.closeAllConnections();
+    }
+    server.close(() => {
+      console.log('[Shutdown] Server stopped successfully.');
+      process.exit(0);
+    });
+  } catch (e) {
+    process.exit(0);
+  }
 }
 
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
+process.on('SIGHUP', cleanup);
 
 // Automated ADB Reconnect Watcher
 function startAdbWatcher() {
   const { exec } = require('child_process');
 
+  function broadcastUsbStatus(available) {
+    const statusPayload = JSON.stringify({
+      type: 'usb_status',
+      available: available,
+      port: PORT,
+      localUrl: `http://localhost:${PORT}/?pwa=1`
+    });
+    const connPayload = available ? JSON.stringify({
+      type: 'usb_connected',
+      port: PORT,
+      url: `http://localhost:${PORT}/?pwa=1`,
+      host: '127.0.0.1'
+    }) : null;
+    const switchPayload = available ? JSON.stringify({
+      type: 'switch_to_usb',
+      port: PORT,
+      url: `http://localhost:${PORT}/?pwa=1`,
+      host: '127.0.0.1'
+    }) : null;
+
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(statusPayload);
+          if (available && !client.isUsb) {
+            if (connPayload) client.send(connPayload);
+            if (switchPayload) client.send(switchPayload);
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  function onAdbReverseSuccess() {
+    isAdbReverseActive = true;
+    console.log(`[ADB] ⚡ Tablet connected via USB! Auto-reversed port ${PORT}.`);
+
+    // If Mac is asleep or lid is closed, do NOT wake tablet screen or launch app!
+    if (isMacAsleep || checkIsLidClosedSync()) {
+      console.log('[ADB] 💤 Mac is asleep or lid is closed. Skipping tablet wakeup.');
+      broadcastUsbStatus(true);
+      return;
+    }
+
+    // Wake tablet screen if asleep
+    exec('adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1', () => {});
+    exec('adb shell wm dismiss-keyguard >/dev/null 2>&1', () => {});
+
+    // Enable system immersive mode (hides system status & navigation bars)
+    exec('adb shell "settings put global policy_control immersive.full=*" >/dev/null 2>&1', () => {});
+    exec('adb shell "settings put global policy_control immersive.navigation=*" >/dev/null 2>&1', () => {});
+
+    // Keep screen awake while connected via USB
+    exec('adb shell "settings put global stay_on_while_plugged_in 7; svc power stayon true" >/dev/null 2>&1', () => {});
+
+    // Sync tablet display refresh rate with current FPS setting
+    setTabletHardwareRefreshRate(currentTabletFpsSetting);
+
+    // Broadcast USB available status immediately, and repeated after 400ms and 1200ms
+    broadcastUsbStatus(true);
+    setTimeout(() => broadcastUsbStatus(true), 400);
+    setTimeout(() => broadcastUsbStatus(true), 1200);
+
+    // Check if we have active clients
+    let hasUsbClient = false;
+    let hasWifiClient = false;
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        if (client.isUsb) hasUsbClient = true;
+        else hasWifiClient = true;
+      }
+    }
+
+    if (usbMigrateFallbackTimer) {
+      clearTimeout(usbMigrateFallbackTimer);
+      usbMigrateFallbackTimer = null;
+    }
+
+    const usbUrl = `http://localhost:${PORT}/?pwa=1`;
+
+    if (!hasUsbClient && !hasWifiClient) {
+      console.log(`[ADB] 🚀 No active clients, auto-launching tablet app: ${usbUrl}`);
+      launchTabletApp(usbUrl);
+    } else if (hasWifiClient && !hasUsbClient) {
+      // Wi-Fi client is active: allow 2.5s for seamless in-page migration or client redirect.
+      usbMigrateFallbackTimer = setTimeout(() => {
+        usbMigrateFallbackTimer = null;
+        let usbNow = false;
+        for (const client of wss.clients) {
+          if (client.readyState === WebSocket.OPEN && client.isUsb) {
+            usbNow = true;
+            break;
+          }
+        }
+        if (!usbNow) {
+          console.log(`[ADB] ⚡ Wi-Fi client did not migrate to USB within timeout. Directing tablet app to USB: ${usbUrl}`);
+          for (const client of wss.clients) {
+            if (client.readyState === WebSocket.OPEN && !client.isUsb) {
+              try {
+                client.send(JSON.stringify({
+                  type: 'switch_to_usb',
+                  port: PORT,
+                  url: usbUrl,
+                  force: true
+                }));
+              } catch (_) {}
+            }
+          }
+          launchTabletApp(usbUrl);
+        }
+      }, 2500);
+    }
+  }
+
   setInterval(() => {
     exec('adb devices', (err, stdout) => {
       if (err) {
+        if (usbMigrateFallbackTimer) {
+          clearTimeout(usbMigrateFallbackTimer);
+          usbMigrateFallbackTimer = null;
+        }
+        if (isAdbReverseActive) {
+          console.log('[ADB] 🔌 USB device disconnected (adb error).');
+          isAdbReverseActive = false;
+          broadcastUsbStatus(false);
+        }
         isAdbDeviceConnected = false;
-        isAdbReverseActive = false;
         return;
       }
+
+      if (stdout.includes('\toffline')) {
+        console.log('[ADB] 🔄 Device is offline after sleep/wake. Running adb reconnect...');
+        exec('adb reconnect offline >/dev/null 2>&1', () => {});
+      }
+
       const lines = stdout.split('\n').filter(l => l.includes('\tdevice'));
       const devicePresent = lines.length > 0;
       isAdbDeviceConnected = devicePresent;
 
-      if (devicePresent) {
-        if (!isAdbReverseActive) {
-          exec(`adb reverse tcp:${PORT} tcp:${PORT}`, (rErr) => {
-            if (!rErr) {
-              isAdbReverseActive = true;
-              console.log(`[ADB] ⚡ Tablet connected via USB! Auto-reversed port ${PORT}.`);
-              
-              // Wake tablet screen if asleep
-              exec('adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1', () => {});
-              exec('adb shell wm dismiss-keyguard >/dev/null 2>&1', () => {});
-
-              // Enable system immersive mode (hides system status & navigation bars)
-              exec('adb shell "settings put global policy_control immersive.full=*" >/dev/null 2>&1', () => {});
-              exec('adb shell "settings put global policy_control immersive.navigation=*" >/dev/null 2>&1', () => {});
-
-              // Keep screen awake permanently while Android Duo is connected
-              exec('adb shell settings put global stay_on_while_plugged_in 7 >/dev/null 2>&1', () => {});
-              exec('adb shell svc power stayon true >/dev/null 2>&1', () => {});
-              exec('adb shell settings put system screen_off_timeout 2147483647 >/dev/null 2>&1', () => {});
-
-              const usbUrl = `http://127.0.0.1:${PORT}/?pwa=1`;
-
-              // 1. Notify any active Wi-Fi clients to immediately navigate to the USB tunnel
-              let hasUsbClient = false;
-              let wifiClientCount = 0;
-              for (const client of wss.clients) {
-                if (client.readyState === WebSocket.OPEN) {
-                  if (client.isUsb) {
-                    hasUsbClient = true;
-                  } else {
-                    wifiClientCount++;
-                    client.send(JSON.stringify({ type: 'usb_connected', port: PORT, url: usbUrl }));
-                  }
-                }
-              }
-
-              if (wifiClientCount > 0) {
-                console.log(`[ADB] 📱 Notified ${wifiClientCount} active Wi-Fi client(s) to switch to USB (${usbUrl}).`);
-              }
-
-              // 2. Direct tablet browser to USB tunnel (127.0.0.1) if not already connected via USB
-              if (!hasUsbClient) {
-                console.log(`[ADB] 🚀 Directing tablet browser to USB tunnel: ${usbUrl}`);
-                exec(`adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d "${usbUrl}" >/dev/null 2>&1`, (launchErr) => {
-                  if (launchErr) {
-                    exec(`adb shell am start -a android.intent.action.VIEW -d "${usbUrl}" >/dev/null 2>&1`, () => {});
-                  }
-                  setTimeout(() => {
-                    exec('adb shell input keyevent 141 >/dev/null 2>&1', () => {}); // F11
-                  }, 800);
-                });
-              }
-            }
-          });
+      if (!devicePresent) {
+        if (usbMigrateFallbackTimer) {
+          clearTimeout(usbMigrateFallbackTimer);
+          usbMigrateFallbackTimer = null;
         }
-      } else {
         if (isAdbReverseActive) {
           console.log('[ADB] 🔌 USB device disconnected.');
+          isAdbReverseActive = false;
+          broadcastUsbStatus(false);
         }
-        isAdbReverseActive = false;
+        return;
       }
+
+      // Device is present! Check if reverse tunnel is actually established in adb
+      exec('adb reverse --list', (listErr, listStdout) => {
+        const reverseIsActive = !listErr && listStdout && listStdout.includes(`tcp:${PORT}`);
+
+        if (reverseIsActive) {
+          if (!isAdbReverseActive) {
+            onAdbReverseSuccess();
+          } else {
+            // Tunnel is ALREADY active: check if any clients are still streaming over Wi-Fi!
+            let hasWifiClient = false;
+            let hasUsbClient = false;
+            for (const client of wss.clients) {
+              if (client.readyState === WebSocket.OPEN) {
+                if (client.isUsb) hasUsbClient = true;
+                else hasWifiClient = true;
+              }
+            }
+            if (hasWifiClient && !hasUsbClient) {
+              // Actively push USB migration status to Wi-Fi client so it switches back
+              broadcastUsbStatus(true);
+            }
+          }
+          return;
+        }
+
+        // Tunnel is not active in adb, run adb reverse!
+        exec(`adb reverse tcp:${PORT} tcp:${PORT}`, (rErr) => {
+          if (rErr) {
+            // If failed because address in use or stale listener, remove and retry
+            exec(`adb reverse --remove tcp:${PORT}`, () => {
+              exec(`adb reverse tcp:${PORT} tcp:${PORT}`, (retryErr) => {
+                if (!retryErr) {
+                  onAdbReverseSuccess();
+                }
+              });
+            });
+            return;
+          }
+          onAdbReverseSuccess();
+        });
+      });
     });
   }, 1500);
+}
+
+// App Launch Automation for Xiaomi Pad (PWA WebAPK or Browser)
+function launchTabletApp(url) {
+  const targetUrl = url || `http://localhost:${PORT}/?pwa=1`;
+  const { exec } = require('child_process');
+  exec('adb shell pm list packages org.chromium.webapk 2>/dev/null', (pErr, pStdout) => {
+    if (!pErr && pStdout && pStdout.includes('org.chromium.webapk')) {
+      const lines = pStdout.trim().split('\n');
+      const pkg = lines[0].replace('package:', '').trim();
+      console.log(`[ADB] 📱 Launching installed Android Duo WebAPK: ${pkg}`);
+      exec(`adb shell monkey -p ${pkg} 1 >/dev/null 2>&1`, () => {});
+    } else {
+      console.log(`[ADB] 🌐 Launching via browser intent: ${targetUrl}`);
+      exec(`adb shell am start -a android.intent.action.VIEW -d "${targetUrl}" >/dev/null 2>&1`, () => {});
+    }
+  });
 }
 
 // Smart Mac Sleep, Lid Close & Lock Screen Watcher
@@ -750,56 +1057,88 @@ let isMacAsleep = false;
 function handleMacPowerStateChange(state) {
   const { exec } = require('child_process');
 
-  if (state === 'sleep' || state === 'lock') {
+  if (state === 'sleep') {
     if (isMacAsleep) return;
     isMacAsleep = true;
-    console.log(`[Power] 🌙 Mac entered ${state} state. Minimizing tablet app to Home Screen...`);
+    lastJpegFrame = null;
+    console.log(`[Power] 🌙 Mac entered sleep state / lid closed. Extinguishing tablet display...`);
 
-    // 1. Broadcast to tablet client to drop WakeLock and blank canvas
+    // 1. Broadcast to tablet client to drop WakeLock and activate sleep screen curtain
     for (const client of wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'mac_state', state: 'sleep' }));
+        try {
+          client.send(JSON.stringify({ type: 'mac_state', state: 'sleep' }));
+        } catch (_) {}
       }
     }
 
-    // 2. Minimize Android app / return to Home Screen
-    exec('adb shell input keyevent KEYCODE_HOME >/dev/null 2>&1', () => {});
+    // 2. Extinguish tablet display hardware:
+    // Reset stay_on_while_plugged_in to 0 so USB power doesn't prevent screen off
+    // Set screen_off_timeout to 15000 (15 seconds) so Android's native timer turns off screen
+    exec('adb shell "settings put global stay_on_while_plugged_in 0; svc power stayon false; settings put system screen_off_timeout 15000" >/dev/null 2>&1', () => {
+      // Query screen state: if awake, send KEYCODE_POWER (26) to extinguish screen immediately!
+      exec('adb shell "dumpsys display | grep mScreenState || dumpsys power | grep mWakefulness" 2>/dev/null', (err, stdout) => {
+        const isAwake = !stdout || stdout.includes('ON') || stdout.includes('Awake') || stdout.includes('VR');
+        if (isAwake) {
+          exec('adb shell input keyevent 26 >/dev/null 2>&1', () => {});
+        }
+      });
+    });
   } else if (state === 'wake' || state === 'unlock') {
-    if (!isMacAsleep) return;
+    if (checkIsLidClosedSync()) {
+      console.log('[Power] 🛑 Ignore wake: MacBook lid is still closed (AppleClamshellState = Yes).');
+      return;
+    }
     isMacAsleep = false;
-    console.log(`[Power] ☀️ Mac woke up / unlocked (${state}). Restoring tablet app...`);
+    console.log(`[Power] ☀️ Mac woke up / lid opened (${state}). Restoring tablet display...`);
 
-    // 1. Wake tablet display & dismiss lockscreen
-    exec('adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1', () => {});
-    exec('adb shell wm dismiss-keyguard >/dev/null 2>&1', () => {});
-    exec('adb shell "settings put global policy_control immersive.full=*" >/dev/null 2>&1', () => {});
-    exec('adb shell "settings put global policy_control immersive.navigation=*" >/dev/null 2>&1', () => {});
-
-    // 2. Bring Android Duo / Chrome back to front without reloading
-    exec(`adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d "http://localhost:${PORT}/?pwa=1" >/dev/null 2>&1`, (launchErr) => {
-      if (launchErr) {
-        exec(`adb shell am start -a android.intent.action.VIEW -d "http://localhost:${PORT}/?pwa=1" >/dev/null 2>&1`, () => {});
-      }
+    // 1. Wake tablet display hardware and restore brightness/timeout settings
+    const wakeCmd = 'settings put global stay_on_while_plugged_in 7; svc power stayon true; settings put system screen_off_timeout 30000; settings put global policy_control immersive.full=*; settings put global policy_control immersive.navigation=*; input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard';
+    exec(`adb shell "${wakeCmd}" >/dev/null 2>&1`, () => {
+      exec('adb shell "dumpsys display | grep mScreenState || dumpsys power | grep mWakefulness" 2>/dev/null', (err, stdout) => {
+        const isOff = stdout && (stdout.includes('OFF') || stdout.includes('Asleep') || stdout.includes('Dozing'));
+        if (isOff) {
+          exec('adb shell "input keyevent 26; input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard" >/dev/null 2>&1', () => {});
+        }
+      });
     });
 
-    // 3. Notify clients to re-acquire WakeLock and resume stream
-    for (const client of wss.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'mac_state', state: 'wake' }));
-      }
-    }
+    // Restore tablet hardware display refresh rate
+    setTabletHardwareRefreshRate(currentTabletFpsSetting);
 
-    // 4. Request fresh screen frame
+    // 2. Immediately launch / bring tablet app to foreground
+    launchTabletApp();
+
+    // 3. Broadcast wake event to all connected clients (immediately, and repeated after 500ms, 1200ms)
+    const broadcastWake = () => {
+      for (const client of wss.clients) {
+        if (client.readyState === WebSocket.OPEN) {
+          try {
+            client.send(JSON.stringify({ type: 'mac_state', state: 'wake' }));
+            if (lastJpegFrame) {
+              client.send(lastJpegFrame, { binary: true });
+            }
+          } catch (_) {}
+        }
+      }
+    };
+    broadcastWake();
+    setTimeout(broadcastWake, 500);
+    setTimeout(broadcastWake, 1200);
+
+    // 4. Immediately request fresh frame from native capture engine
     sendToNative({ type: 'request_frame' });
+    setTimeout(() => sendToNative({ type: 'request_frame' }), 600);
+    setTimeout(() => sendToNative({ type: 'request_frame' }), 1500);
   }
 }
 
 function startPowerWatcher() {
   const { exec } = require('child_process');
-  let lastLidClosed = false;
+  let lastLidClosed = checkIsLidClosedSync();
   let lastHeartbeat = Date.now();
 
-  // Hardware Clamshell (Lid) Watcher via ioreg
+  // Snappy Hardware Clamshell (Lid) Watcher via ioreg (400ms polling)
   setInterval(() => {
     exec('ioreg -r -n IOPMrootDomain | grep -i AppleClamshellState', (err, stdout) => {
       if (err || !stdout) return;
@@ -815,14 +1154,18 @@ function startPowerWatcher() {
         }
       }
     });
-  }, 2000);
+  }, 400);
 
-  // Deep sleep timer drift detector
+  // Deep sleep timer drift detector (protect against false wake during macOS DarkWake / Power Nap)
   setInterval(() => {
     const now = Date.now();
     const elapsed = now - lastHeartbeat;
     lastHeartbeat = now;
-    if (elapsed > 4000) {
+    if (elapsed > 3000) {
+      if (checkIsLidClosedSync()) {
+        console.log(`[Power] 💤 Maintenance tick during clamshell sleep (timer gap: ${Math.round(elapsed/1000)}s) — lid closed, tablet remains asleep.`);
+        return;
+      }
       console.log(`[Power] ⏰ System woke up from deep sleep (timer gap: ${Math.round(elapsed/1000)}s).`);
       handleMacPowerStateChange('wake');
     }

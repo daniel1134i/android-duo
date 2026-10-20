@@ -27,23 +27,43 @@ final class ServerManager: ObservableObject {
     private let projectDir: String
     
     init() {
-        // Find project directory (either current directory or bundle directory)
-        let defaultPath = "/Users/daniel/Documents/android duo"
-        if FileManager.default.fileExists(atPath: "\(defaultPath)/server/index.js") {
-            self.projectDir = defaultPath
+        // 1. First check if bundled inside the .app Resources/app directory (Standalone/DMG Mode)
+        if let resPath = Bundle.main.resourcePath,
+           FileManager.default.fileExists(atPath: "\(resPath)/app/server/index.js") {
+            self.projectDir = "\(resPath)/app"
+        } else if let configuredDir = Bundle.main.infoDictionary?["ProjectDir"] as? String,
+           FileManager.default.fileExists(atPath: "\(configuredDir)/server/index.js") {
+            self.projectDir = configuredDir
         } else {
-            let bundlePath = Bundle.main.bundlePath
-            let parentDir = (bundlePath as NSString).deletingLastPathComponent
-            self.projectDir = parentDir
+            let defaultPath = "/Users/daniel/Documents/android duo"
+            if FileManager.default.fileExists(atPath: "\(defaultPath)/server/index.js") {
+                self.projectDir = defaultPath
+            } else {
+                let bundlePath = Bundle.main.bundlePath
+                let parentDir = (bundlePath as NSString).deletingLastPathComponent
+                self.projectDir = parentDir
+            }
         }
     }
     
     func startServer() {
         guard !isRunning else { return }
         
-        let nodePath = findNodeBinary() ?? "/opt/homebrew/bin/node"
-        guard FileManager.default.isExecutableFile(atPath: nodePath) else {
-            fputs("[Android Duo App] Error: node binary not found at \(nodePath)\n", stderr)
+        guard let nodePath = findNodeBinary() else {
+            fputs("[Android Duo App] Error: node binary not found on this system.\n", stderr)
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Требуется Node.js"
+                alert.informativeText = "Для работы фонового сервера Android Duo требуется Node.js.\n\nУстановите его с официального сайта (nodejs.org) или через терминал: brew install node"
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Скачать Node.js (nodejs.org)")
+                alert.addButton(withTitle: "Закрыть")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    if let url = URL(string: "https://nodejs.org/") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
             return
         }
         
@@ -88,9 +108,21 @@ final class ServerManager: ObservableObject {
         telemetryTimer?.invalidate()
         telemetryTimer = nil
         
-        if let p = serverProcess, p.isRunning {
-            p.terminate()
-            p.waitUntilExit()
+        if let p = serverProcess {
+            if p.isRunning {
+                p.terminate() // sends SIGTERM
+                
+                // Allow up to 250ms for node to exit gracefully
+                let start = Date()
+                while p.isRunning && Date().timeIntervalSince(start) < 0.25 {
+                    usleep(20_000) // 20ms
+                }
+                
+                // If still running after 250ms, force kill with SIGKILL
+                if p.isRunning {
+                    kill(p.processIdentifier, SIGKILL)
+                }
+            }
             self.serverProcess = nil
         }
         
@@ -150,6 +182,37 @@ final class ServerManager: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([appURL])
     }
     
+    func changeResolution(width: Int, height: Int) {
+        guard let url = URL(string: "http://127.0.0.1:3000/api/resolution?width=\(width)&height=\(height)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request) { [weak self] _, _, error in
+            if error == nil {
+                DispatchQueue.main.async {
+                    self?.resolution = "\(width)x\(height)"
+                    self?.fetchTelemetry()
+                }
+            }
+        }.resume()
+    }
+    
+    func launchTabletApp() {
+        guard let url = URL(string: "http://127.0.0.1:3000/api/launch") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request).resume()
+    }
+    
+    func sendPowerState(_ state: String) {
+        guard let url = URL(string: "http://127.0.0.1:3000/api/power?state=\(state)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request).resume()
+    }
+    
     func relaunchApp() {
         stopServer()
         let appPath = Bundle.main.bundleURL.path
@@ -160,21 +223,62 @@ final class ServerManager: ObservableObject {
         NSApp.terminate(nil)
     }
     
-    private func cleanPort3000() {
+    func cleanPort3000() {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "pkill -f 'mac_host' 2>/dev/null; pkill -f 'node server/index.js' 2>/dev/null; lsof -ti:3000 | xargs kill -9 2>/dev/null || true"]
+        p.arguments = [
+            "-c",
+            "pkill -9 -f 'mac_host' 2>/dev/null; " +
+            "pkill -9 -f 'node.*server/index.js' 2>/dev/null; " +
+            "lsof -ti:3000 2>/dev/null | xargs kill -9 2>/dev/null || true"
+        ]
         try? p.run()
-        p.waitUntilExit()
+        let start = Date()
+        while p.isRunning && Date().timeIntervalSince(start) < 0.4 {
+            usleep(20_000)
+        }
+        if p.isRunning {
+            kill(p.processIdentifier, SIGKILL)
+        }
     }
     
     private func findNodeBinary() -> String? {
-        let candidates = [
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var candidates = [
             "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
-            "/usr/bin/node"
+            "/usr/bin/node",
+            "/opt/local/bin/node"
         ]
-        return candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        
+        let nvmDir = "\(home)/.nvm/versions/node"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmDir) {
+            for v in versions.sorted().reversed() {
+                candidates.append("\(nvmDir)/\(v)/bin/node")
+            }
+        }
+        
+        candidates.append("\(home)/.fnm/current/bin/node")
+        candidates.append("\(home)/.asdf/shims/node")
+        candidates.append("\(home)/.volta/bin/node")
+        
+        if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return found
+        }
+        
+        let pipe = Pipe()
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-l", "-c", "which node"]
+        proc.standardOutput = pipe
+        try? proc.run()
+        proc.waitUntilExit()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let out = out, !out.isEmpty && FileManager.default.isExecutableFile(atPath: out) {
+            return out
+        }
+        
+        return nil
     }
     
     private func startTelemetryPolling() {
@@ -261,28 +365,117 @@ final class ServerManager: ObservableObject {
     }
 }
 
+// MARK: - Window Close Action Enum
+enum WindowCloseAction: String, CaseIterable, Identifiable {
+    case quitApp = "quit"
+    case minimizeToMenuBar = "minimize"
+    
+    var id: String { rawValue }
+    
+    var title: String {
+        switch self {
+        case .quitApp:
+            return "Завершать приложение"
+        case .minimizeToMenuBar:
+            return "Сворачивать в Menu Bar"
+        }
+    }
+}
+
+// MARK: - Toast HUD Notification
+final class ToastHUD {
+    static func show(message: String, duration: TimeInterval = 2.5) {
+        DispatchQueue.main.async {
+            let panel = NSPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 380, height: 62),
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false
+            )
+            panel.isOpaque = false
+            panel.backgroundColor = NSColor.clear
+            panel.level = .floating
+            panel.ignoresMouseEvents = true
+            panel.hasShadow = true
+            
+            let hosting = NSHostingView(rootView:
+                HStack(spacing: 12) {
+                    Image(systemName: "menubar.arrow.up.rectangle")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Android Duo")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.primary)
+                        Text(message)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(NSColor.windowBackgroundColor).opacity(0.96))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                        )
+                )
+            )
+            panel.contentView = hosting
+            
+            if let screen = NSScreen.main {
+                let screenRect = screen.visibleFrame
+                let x = screenRect.origin.x + (screenRect.width - 380) / 2
+                let y = screenRect.origin.y + screenRect.height - 80
+                panel.setFrameOrigin(NSPoint(x: x, y: y))
+            }
+            
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.2
+                panel.animator().alphaValue = 1.0
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.35
+                    panel.animator().alphaValue = 0.0
+                }, completionHandler: {
+                    panel.close()
+                })
+            }
+        }
+    }
+}
+
 // MARK: - App Mode & Window/Menu Bar Switcher
 final class AppModeManager: ObservableObject {
     static let shared = AppModeManager()
     
     @Published var isMenuBarOnly = false
-    @Published var minimizeToMenuBarOnClose: Bool {
+    @Published var windowCloseAction: WindowCloseAction {
         didSet {
-            UserDefaults.standard.set(minimizeToMenuBarOnClose, forKey: "minimizeToMenuBarOnClose")
-        }
-    }
-    
-    @Published var hideFromDockInMenuBarMode: Bool {
-        didSet {
-            UserDefaults.standard.set(hideFromDockInMenuBarMode, forKey: "hideFromDockInMenuBarMode")
+            UserDefaults.standard.set(windowCloseAction.rawValue, forKey: "windowCloseAction")
         }
     }
     
     weak var window: NSWindow?
     
     init() {
-        self.minimizeToMenuBarOnClose = UserDefaults.standard.object(forKey: "minimizeToMenuBarOnClose") as? Bool ?? true
-        self.hideFromDockInMenuBarMode = UserDefaults.standard.object(forKey: "hideFromDockInMenuBarMode") as? Bool ?? false
+        if let savedAction = UserDefaults.standard.string(forKey: "windowCloseAction"),
+           let action = WindowCloseAction(rawValue: savedAction) {
+            self.windowCloseAction = action
+        } else if let oldMin = UserDefaults.standard.object(forKey: "minimizeToMenuBarOnClose") as? Bool {
+            self.windowCloseAction = oldMin ? .minimizeToMenuBar : .quitApp
+        } else {
+            self.windowCloseAction = .quitApp
+        }
     }
     
     func switchToDockAndWindow() {
@@ -290,6 +483,8 @@ final class AppModeManager: ObservableObject {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         if let win = window {
+            win.level = .normal
+            win.collectionBehavior = [.managed, .participatesInCycle]
             if let mainScreen = NSScreen.screens.first {
                 let screenRect = mainScreen.visibleFrame
                 let x = screenRect.origin.x + (screenRect.width - 440) / 2
@@ -301,19 +496,15 @@ final class AppModeManager: ObservableObject {
         }
     }
     
-    func switchToMenuBarOnly() {
+    func switchToMenuBarOnly(notify: Bool = true) {
         isMenuBarOnly = true
         window?.orderOut(nil)
-        if hideFromDockInMenuBarMode {
-            NSApp.setActivationPolicy(.accessory)
-        } else {
-            NSApp.setActivationPolicy(.regular)
-        }
+        // When in Menu Bar mode, ALWAYS hide from Dock so no ghost icon remains
+        NSApp.setActivationPolicy(.accessory)
         
-        let notif = NSUserNotification()
-        notif.title = "Android Duo"
-        notif.informativeText = "Приложение свёрнуто в Menu Bar (вверху у часов). Нажмите на иконку «📱 Duo», чтобы вернуть окно."
-        NSUserNotificationCenter.default.deliver(notif)
+        if notify {
+            ToastHUD.show(message: "Свёрнуто в строку меню (вверху у часов). Нажмите на иконку «📱 Duo», чтобы вернуть окно.")
+        }
     }
     
     func toggleMode() {
@@ -627,15 +818,32 @@ struct DashboardView: View {
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
                     
-                    // Settings Toggles
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("При закрытии окна сворачивать в Menu Bar", isOn: $mode.minimizeToMenuBarOnClose)
-                            .font(.system(size: 12))
-                        Toggle("Скрывать значок из Dock при переносе в Menu Bar", isOn: $mode.hideFromDockInMenuBarMode)
-                            .font(.system(size: 11))
+                    // Window Close Behavior Settings
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Text("При нажатии на ✕ (закрытие окна):")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        
+                        Picker("", selection: $mode.windowCloseAction) {
+                            Text("Завершать приложение").tag(WindowCloseAction.quitApp)
+                            Text("Сворачивать в Menu Bar").tag(WindowCloseAction.minimizeToMenuBar)
+                        }
+                        .pickerStyle(.segmented)
+                        
+                        Text(mode.windowCloseAction == .quitApp
+                            ? "💡 Нажатие на ✕ полностью завершит работу Android Duo и остановит сервер."
+                            : "💡 Нажатие на ✕ скроет окно и значок из Dock, оставив приложение в строке меню.")
+                            .font(.system(size: 10.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(2)
                     }
-                    .padding(.horizontal, 4)
+                    .padding(12)
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                    .cornerRadius(10)
                 }
                 .padding(20)
             }
@@ -663,8 +871,7 @@ struct DashboardView: View {
                 .buttonStyle(.bordered)
                 
                 Button("Выйти") {
-                    server.stopServer()
-                    NSApp.terminate(nil)
+                    AppDelegate.shared?.quitApplication()
                 }
                 .buttonStyle(.bordered)
                 .font(.system(size: 12))
@@ -713,16 +920,27 @@ struct StatusMetricBox: View {
 
 // MARK: - App Delegate & Menu Bar Setup
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private var statusItem: NSStatusItem!
+    static weak var shared: AppDelegate?
+    
+    private var statusItem: NSStatusItem?
     private var window: NSWindow!
     private let server = ServerManager.shared
     private let mode = AppModeManager.shared
+    private var sigtermSource: DispatchSourceSignal?
+    private var sigintSource: DispatchSourceSignal?
+    private var isTerminating = false
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 1. Setup Menu Bar Status Item
+        AppDelegate.shared = self
+        setupSignalHandlers()
+        
+        // 1. Setup Standard macOS Main Menu (Cmd+Q, Cmd+W, Cmd+H)
+        setupMainMenu()
+        
+        // 2. Setup Menu Bar Status Item
         setupStatusItem()
         
-        // 2. Setup Main Dashboard Window
+        // 3. Setup Main Dashboard Window
         setupMainWindow()
         
         // Check and request screen capture permission if not granted
@@ -734,14 +952,129 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Start server automatically
         server.startServer()
         
-        // 3. Register Global Keyboard Shortcut (Opt+Cmd+Right Arrow) to throw window to tablet
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        // 4. Register Keyboard Shortcuts: Cmd+Q to quit, Opt+Cmd+Right Arrow to throw window
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains(.command) && (event.keyCode == 12 || event.charactersIgnoringModifiers == "q") {
+                self?.quitApplication()
+                return nil
+            }
             if event.modifierFlags.contains([.command, .option]) && event.keyCode == 124 { // Right Arrow
                 moveFrontmostWindowToTablet()
                 return nil
             }
             return event
         }
+        
+        // 5. Register System Power & Sleep Observers
+        let wsCenter = NSWorkspace.shared.notificationCenter
+        wsCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            fputs("[Android Duo App] System will sleep. Notifying server...\n", stderr)
+            self?.notifyServerPowerState("sleep")
+        }
+        wsCenter.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            fputs("[Android Duo App] Screens did sleep. Notifying server...\n", stderr)
+            self?.notifyServerPowerState("sleep")
+        }
+        wsCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            fputs("[Android Duo App] System woke up. Notifying server...\n", stderr)
+            self?.notifyServerPowerState("wake")
+        }
+        wsCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            fputs("[Android Duo App] Screens did wake. Notifying server...\n", stderr)
+            self?.notifyServerPowerState("wake")
+        }
+    }
+    
+    private func isLidClosed() -> Bool {
+        let rootDomain = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard rootDomain != 0 else { return false }
+        defer { IOObjectRelease(rootDomain) }
+        if let property = IORegistryEntryCreateCFProperty(rootDomain, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool {
+            return property
+        }
+        return false
+    }
+
+    private func notifyServerPowerState(_ state: String) {
+        if state == "wake" {
+            // Check immediately, and also retry after 400ms in case clamshell sensor lags
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self = self, !self.isLidClosed() else { return }
+                self.sendPowerStateRequest("wake")
+            }
+        }
+        if state == "wake" && isLidClosed() {
+            fputs("[Android Duo App] Immediate wake suppressed: laptop lid is closed. Scheduled delayed check.\n", stderr)
+            return
+        }
+        sendPowerStateRequest(state)
+    }
+
+    private func sendPowerStateRequest(_ state: String) {
+        guard let url = URL(string: "http://127.0.0.1:3000/api/power?state=\(state)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 1.0
+        URLSession.shared.dataTask(with: request).resume()
+    }
+    
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        
+        let appMenu = NSMenu()
+        appMenuItem.submenu = appMenu
+        
+        let appName = "Android Duo"
+        appMenu.addItem(withTitle: "О программе \(appName)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        
+        let hideItem = NSMenuItem(title: "Скрыть \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(hideItem)
+        
+        let hideOthersItem = NSMenuItem(title: "Скрыть остальные", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+        
+        appMenu.addItem(withTitle: "Показать все", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        
+        let quitItem = NSMenuItem(title: "Завершить \(appName)", action: #selector(quitAction), keyEquivalent: "q")
+        quitItem.target = self
+        appMenu.addItem(quitItem)
+        
+        // Window Menu
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Окно")
+        windowMenuItem.submenu = windowMenu
+        
+        let minItem = NSMenuItem(title: "Свернуть", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(minItem)
+        let closeItem = NSMenuItem(title: "Закрыть окно", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(closeItem)
+        
+        NSApp.mainMenu = mainMenu
+    }
+    
+    private func setupSignalHandlers() {
+        signal(SIGTERM, SIG_IGN)
+        signal(SIGINT, SIG_IGN)
+        
+        let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        term.setEventHandler { [weak self] in
+            self?.quitApplication()
+        }
+        term.resume()
+        self.sigtermSource = term
+        
+        let intr = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        intr.setEventHandler { [weak self] in
+            self?.quitApplication()
+        }
+        intr.resume()
+        self.sigintSource = intr
     }
     
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -759,11 +1092,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         CFPreferencesSynchronize("com.apple.controlcenter" as CFString, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
         UserDefaults.standard.set(180.0, forKey: prefKey)
         
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.autosaveName = "AndroidDuoStatusItem"
-        statusItem.behavior = [.removalAllowed]
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.autosaveName = "AndroidDuoStatusItem"
+        item.behavior = [.removalAllowed]
         
-        if let button = statusItem.button {
+        if let button = item.button {
             button.image = NSImage(systemSymbolName: "ipad.and.iphone", accessibilityDescription: "Android Duo")
             button.image?.isTemplate = true
             button.title = " Duo"
@@ -773,7 +1106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         
         let menu = NSMenu()
         updateMenu(menu)
-        statusItem.menu = menu
+        item.menu = menu
+        self.statusItem = item
         
         // Update menu dynamically before it displays
         Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self, weak menu] _ in
@@ -785,55 +1119,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         
-        // Header Status
-        let statusTitle = server.isConnected ? (server.transport == "usb" ? "🟢 Xiaomi Pad SE: USB ⚡" : "🟢 Xiaomi Pad SE: Wi-Fi 📶") : (server.isRunning ? "🟡 Ожидание планшета..." : "🔴 Сервер остановлен")
-        let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
-        
-        // Window & Dock switcher placed prominently at the top
-        let windowToggleItem = NSMenuItem(title: "🪟 Открыть дашборд (Вернуть в Dock)", action: #selector(showWindowFromMenu), keyEquivalent: "o")
-        windowToggleItem.target = self
-        menu.addItem(windowToggleItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Screen Recording Permission Notice in menu
-        if !server.hasScreenCapturePermission {
-            let permItem = NSMenuItem(title: "⚠️ Требуется «Запись экрана» (Нажмите)", action: #selector(openPermissionsAction), keyEquivalent: "")
-            permItem.target = self
-            menu.addItem(permItem)
+        // Update Status Item Button badge in Menu Bar
+        if let button = statusItem?.button {
+            button.title = " Duo"
+            button.toolTip = "Android Duo — \(server.connectionType) • \(server.resolution) • \(server.fps) FPS"
         }
         
-        // Stats
+        // Header Status
+        let statusTitle = server.isConnected ? (server.transport == "usb" ? "🟢 Xiaomi Pad SE: USB ⚡" : "🟢 Xiaomi Pad SE: Wi-Fi 📶") : (server.isRunning ? "🟡 Ожидание планшета..." : "🔴 Сервер остановлен")
+        let statusMenuItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        statusMenuItem.isEnabled = false
+        menu.addItem(statusMenuItem)
+        
+        // Link Quality & Telemetry
         if server.isConnected {
-            let statsTitle = "⚡ \(server.fps) FPS • \(server.resolution) • \(server.transport == "usb" ? "USB ⚡" : "Wi-Fi 📶")"
+            let channelDetail = server.transport == "usb" 
+                ? "⚡ Прямой USB-кабель (127.0.0.1) • Задержка < 1 мс" 
+                : "📶 Сеть Wi-Fi (\(server.clientIp.isEmpty ? server.localIP : server.clientIp))"
+            let channelItem = NSMenuItem(title: channelDetail, action: nil, keyEquivalent: "")
+            channelItem.isEnabled = false
+            menu.addItem(channelItem)
+            
+            let statsTitle = "⚡ \(server.fps) FPS • \(server.resolution) • Поток 90 Гц"
             let statsItem = NSMenuItem(title: statsTitle, action: nil, keyEquivalent: "")
             statsItem.isEnabled = false
             menu.addItem(statsItem)
             
+            // Battery Telemetry
             if let batt = server.tabletBattery {
-                let battTitle = "🔋 Батарея планшета: \(batt)%" + (server.isTabletCharging ? " ⚡" : "")
+                let battTitle = "🔋 Батарея планшета: \(batt)%" + (server.isTabletCharging ? " ⚡ (Зарядка)" : "")
                 let battItem = NSMenuItem(title: battTitle, action: nil, keyEquivalent: "")
                 battItem.isEnabled = false
                 menu.addItem(battItem)
             }
+            if let macBatt = server.macBattery {
+                let macTitle = "💻 Батарея MacBook: \(macBatt)%"
+                let macItem = NSMenuItem(title: macTitle, action: nil, keyEquivalent: "")
+                macItem.isEnabled = false
+                menu.addItem(macItem)
+            }
         }
         
-        // Quick Action
+        menu.addItem(NSMenuItem.separator())
+        
+        // Quick Actions
         let moveWinItem = NSMenuItem(title: "🚀 Перенести активное окно на планшет", action: #selector(moveWindowAction), keyEquivalent: "")
         moveWinItem.target = self
         menu.addItem(moveWinItem)
         
-        let webItem = NSMenuItem(title: "🌐 Открыть веб-трансляцию в браузере", action: #selector(openWebAction), keyEquivalent: "")
+        if server.isAdbConnected {
+            let launchItem = NSMenuItem(title: "📱 Запустить приложение на планшете (ADB)", action: #selector(launchTabletAppAction), keyEquivalent: "")
+            launchItem.target = self
+            menu.addItem(launchItem)
+            
+            let sleepItem = NSMenuItem(title: "🌙 Погасить экран планшета", action: #selector(sleepTabletAction), keyEquivalent: "")
+            sleepItem.target = self
+            menu.addItem(sleepItem)
+            
+            let wakeItem = NSMenuItem(title: "☀️ Пробудить экран планшета", action: #selector(wakeTabletAction), keyEquivalent: "")
+            wakeItem.target = self
+            menu.addItem(wakeItem)
+        }
+        
+        let webItem = NSMenuItem(title: "🌐 Открыть веб-трансляцию в браузере Mac", action: #selector(openWebAction), keyEquivalent: "")
         webItem.target = self
         menu.addItem(webItem)
         
         menu.addItem(NSMenuItem.separator())
         
-        let restartItem = NSMenuItem(title: "🔄 Перезапустить стрим", action: #selector(restartAction), keyEquivalent: "r")
+        // Window & Server Management
+        let windowToggleItem = NSMenuItem(title: "🪟 Открыть дашборд (Вернуть в Dock)", action: #selector(showWindowFromMenu), keyEquivalent: "o")
+        windowToggleItem.target = self
+        menu.addItem(windowToggleItem)
+        
+        let restartItem = NSMenuItem(title: "🔄 Перезапустить видеопоток", action: #selector(restartAction), keyEquivalent: "r")
         restartItem.target = self
         menu.addItem(restartItem)
+        
+        if !server.hasScreenCapturePermission {
+            let permItem = NSMenuItem(title: "⚠️ Требуется «Запись экрана» (Нажмите)", action: #selector(openPermissionsAction), keyEquivalent: "")
+            permItem.target = self
+            menu.addItem(permItem)
+        }
         
         menu.addItem(NSMenuItem.separator())
         
@@ -852,6 +1219,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
+        window.level = .normal
+        window.collectionBehavior = [.managed, .participatesInCycle]
         if let mainScreen = NSScreen.screens.first {
             let screenRect = mainScreen.visibleFrame
             let x = screenRect.origin.x + (screenRect.width - 440) / 2
@@ -871,13 +1240,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     // Window Close Behavior:
-    // If user clicks red 'X', check if minimizeToMenuBarOnClose is active
+    // User clicked red 'X': check user's preference
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if mode.minimizeToMenuBarOnClose {
+        switch mode.windowCloseAction {
+        case .quitApp:
+            quitApplication()
+            return true
+        case .minimizeToMenuBar:
             mode.switchToMenuBarOnly()
-            return false // don't close/destroy, just hide and switch to accessory
+            return false // don't destroy, just hide and switch to accessory
         }
-        return true
+    }
+    
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        quitApplication()
+        return .terminateNow
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        quitApplication()
+    }
+    
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let openItem = NSMenuItem(title: "🪟 Открыть дашборд", action: #selector(showWindowFromMenu), keyEquivalent: "")
+        openItem.target = self
+        menu.addItem(openItem)
+        menu.addItem(NSMenuItem.separator())
+        let quitItem = NSMenuItem(title: "❌ Завершить Android Duo", action: #selector(quitAction), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+        return menu
+    }
+    
+    func quitApplication() {
+        guard !isTerminating else { return }
+        isTerminating = true
+        fputs("[Android Duo App] Quitting Android Duo cleanly...\n", stderr)
+        
+        // 1. Immediately remove Menu Bar status item
+        if let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            self.statusItem = nil
+        }
+        
+        // 2. Hide window and remove from Dock
+        window?.orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
+        
+        // 3. Stop server and clean child processes
+        server.stopServer()
+        
+        // 4. Force exit process cleanly
+        exit(0)
     }
     
     @objc private func showWindowFromMenu() {
@@ -898,17 +1313,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         server.requestScreenCapturePermission()
     }
     
+    @objc private func setRes1280x800() { server.changeResolution(width: 1280, height: 800) }
+    @objc private func setRes1440x900() { server.changeResolution(width: 1440, height: 900) }
+    @objc private func setRes1920x1200() { server.changeResolution(width: 1920, height: 1200) }
+    @objc private func setRes2560x1600() { server.changeResolution(width: 2560, height: 1600) }
+    @objc private func setRes1024x640() { server.changeResolution(width: 1024, height: 640) }
+    
+    @objc private func launchTabletAppAction() { server.launchTabletApp() }
+    @objc private func sleepTabletAction() { server.sendPowerState("sleep") }
+    @objc private func wakeTabletAction() { server.sendPowerState("wake") }
+    
     @objc private func restartAction() {
         server.restartServer()
     }
     
     @objc private func quitAction() {
-        server.stopServer()
-        NSApp.terminate(nil)
-    }
-    
-    func applicationWillTerminate(_ notification: Notification) {
-        server.stopServer()
+        quitApplication()
     }
 }
 
@@ -918,6 +1338,7 @@ struct AndroidDuoAppMain {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
+        AppDelegate.shared = delegate
         app.delegate = delegate
         app.run()
     }

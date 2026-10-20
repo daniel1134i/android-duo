@@ -1,8 +1,9 @@
-const CACHE_NAME = 'android-duo-v3';
+const CACHE_NAME = 'android-duo-v9';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/client.js',
+  '/render-worker.js',
   '/style.css',
   '/manifest.json',
   '/icon-192.png',

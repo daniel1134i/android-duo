@@ -24,6 +24,8 @@
   --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "MiSans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 /* --------------------------------------------------------------------------
@@ -148,19 +150,95 @@ html, body {
    -------------------------------------------------------------------------- */
 #floating-toolbar {
   position: fixed;
-  top: max(12px, var(--safe-top));
-  left: 50%;
-  transform: translateX(-50%);
   z-index: 5000;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: top 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              bottom 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              left 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              right 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.25s ease;
   pointer-events: none;
 }
 
 #floating-toolbar * {
   pointer-events: auto;
+}
+
+/* Default / Top Center */
+#floating-toolbar,
+#floating-toolbar.pos-top-center {
+  top: max(12px, var(--safe-top));
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translateX(-50%);
+  align-items: center;
+  flex-direction: column;
+}
+
+/* Top Left */
+#floating-toolbar.pos-top-left {
+  top: max(12px, var(--safe-top));
+  left: max(12px, var(--safe-left));
+  right: auto;
+  bottom: auto;
+  transform: none;
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+/* Top Right */
+#floating-toolbar.pos-top-right {
+  top: max(12px, var(--safe-top));
+  right: max(12px, var(--safe-right));
+  left: auto;
+  bottom: auto;
+  transform: none;
+  align-items: flex-end;
+  flex-direction: column;
+}
+
+/* Bottom Center */
+#floating-toolbar.pos-bottom-center {
+  bottom: max(12px, var(--safe-bottom));
+  left: 50%;
+  right: auto;
+  top: auto;
+  transform: translateX(-50%);
+  align-items: center;
+  flex-direction: column-reverse;
+}
+
+/* Bottom Left */
+#floating-toolbar.pos-bottom-left {
+  bottom: max(12px, var(--safe-bottom));
+  left: max(12px, var(--safe-left));
+  right: auto;
+  top: auto;
+  transform: none;
+  align-items: flex-start;
+  flex-direction: column-reverse;
+}
+
+/* Bottom Right */
+#floating-toolbar.pos-bottom-right {
+  bottom: max(12px, var(--safe-bottom));
+  right: max(12px, var(--safe-right));
+  left: auto;
+  top: auto;
+  transform: none;
+  align-items: flex-end;
+  flex-direction: column-reverse;
+}
+
+#floating-toolbar[class*="pos-bottom-"] .toolbar-panel {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+#floating-toolbar[class*="pos-bottom-"].toolbar-collapsed .toolbar-panel {
+  transform: scale(0.95) translateY(8px);
 }
 
 /* --------------------------------------------------------------------------
@@ -318,6 +396,9 @@ html, body {
   gap: 12px;
   width: 92vw;
   max-width: 580px;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--glass-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -354,7 +435,16 @@ html, body {
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--glass-border-subtle);
-  padding-bottom: 10px;
+  padding: 12px 16px 10px 16px;
+  margin: -16px -16px 4px -16px;
+  position: sticky;
+  top: -16px;
+  z-index: 20;
+  background: rgba(18, 20, 24, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top-left-radius: var(--panel-radius);
+  border-top-right-radius: var(--panel-radius);
 }
 
 .header-status {
@@ -413,21 +503,29 @@ html, body {
 }
 
 .panel-close-btn {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   border: 1px solid var(--glass-border-subtle);
-  color: var(--text-muted);
-  width: 28px;
-  height: 28px;
+  color: var(--text-main);
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, transform 0.1s ease;
+  touch-action: manipulation;
+}
+
+.panel-close-btn:active {
+  transform: scale(0.92);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .panel-close-btn:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.2);
   color: var(--text-main);
 }
 
@@ -526,6 +624,54 @@ html, body {
   border-radius: 10px;
   padding: 3px;
   gap: 2px;
+}
+
+.segmented-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.segmented-grid .segment-btn {
+  font-size: 11px;
+  padding: 7px 4px;
+  text-align: center;
+  justify-content: center;
+}
+
+.pill-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--glass-border-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pill-lock-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--text-main);
+}
+
+.pill-lock-btn.locked {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.6);
+  color: #60a5fa;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+}
+
+#floating-toolbar.pill-locked .pill-drag-handle {
+  display: none;
 }
 
 .segmented-control.compact .segment-btn {
@@ -1099,3 +1245,23 @@ html, body {
   transform: scale(0.98);
   background: #005ec4;
 }
+
+/* Sleep Screen Curtain */
+.sleep-curtain {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #000000;
+  z-index: 999999;
+  pointer-events: all;
+  opacity: 1;
+  transition: opacity 0.15s ease-out;
+}
+
+.sleep-curtain.hidden {
+  opacity: 0;
+  pointer-events: none;
+  display: none;
+}
+
