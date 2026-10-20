@@ -16,7 +16,7 @@ final class ServerManager: ObservableObject {
     @Published var clientIp: String = ""
     @Published var fps: Int = 90
     @Published var resolution: String = "1280x800"
-    @Published var orientation: String = "auto"
+    @Published var orientation: String = UserDefaults.standard.string(forKey: "tabletOrientation") ?? "landscape"
     @Published var cpuPercent: Int = 12
     @Published var ramText: String = "6.1 / 8.0 GB"
     @Published var netSpeed: String = "0.0 MB/s"
@@ -236,6 +236,8 @@ final class ServerManager: ObservableObject {
     }
 
     func setOrientation(_ mode: String) {
+        orientation = mode
+        UserDefaults.standard.set(mode, forKey: "tabletOrientation")
         guard let url = URL(string: "http://127.0.0.1:3000/api/orientation?mode=\(mode)") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

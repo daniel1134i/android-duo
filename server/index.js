@@ -167,7 +167,7 @@ let currentBattery = {
   tabletCpuTemp: null
 };
 
-let currentOrientation = 'auto'; // 'auto' | 'landscape' | 'portrait'
+let currentOrientation = appConfig.orientation || 'landscape'; // 'landscape' | 'portrait' | 'auto'
 
 // Real-time Hardware Telemetry (M1/M2 CPU, RAM, Network Speed, Temperature)
 let lastCpuInfo = null;
@@ -504,6 +504,8 @@ const server = http.createServer((req, res) => {
     const mode = urlObj.searchParams.get('mode');
     if (mode && ['auto', 'landscape', 'portrait'].includes(mode)) {
       currentOrientation = mode;
+      appConfig.orientation = mode;
+      saveConfig(appConfig);
       let curW = currentDisplayInfo.width || 1280;
       let curH = currentDisplayInfo.height || 800;
       let targetW = curW;
@@ -782,6 +784,8 @@ wss.on('connection', (ws, req) => {
         const orient = msg.orientation; // 'portrait' | 'landscape' | 'auto'
         if (orient) {
           currentOrientation = orient;
+          appConfig.orientation = orient;
+          saveConfig(appConfig);
           let curW = currentDisplayInfo.width || 1280;
           let curH = currentDisplayInfo.height || 800;
           let targetW = curW;

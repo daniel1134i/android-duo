@@ -34,7 +34,7 @@
     selectedDisplay: null, // set dynamically from display_info
     remoteWidth: 1280,
     remoteHeight: 800,
-    orientationMode: 'auto',
+    orientationMode: localStorage.getItem('duo_orientation') || 'landscape',
     isPortrait: false,
     renderMetrics: {
       scale: 1,
@@ -2666,6 +2666,7 @@
         btn.classList.add('active');
         const mode = btn.getAttribute('data-orientation');
         state.orientationMode = mode;
+        try { localStorage.setItem('duo_orientation', mode); } catch (_) {}
         if (mode === 'auto') {
           showToast('🔄 Автоповорот: включен (по датчику планшета)');
           checkAutoOrientation();
