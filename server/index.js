@@ -408,11 +408,12 @@ wss.on('connection', (ws, req) => {
 
   // Send initial display info matching client expectations with Wi-Fi fallback IPs
   const localIps = getLocalIPs();
+  const initialTargetFps = ws.isUsb ? 90 : 60;
   ws.send(JSON.stringify({
     type: 'init',
     screenWidth: currentDisplayInfo.width,
     screenHeight: currentDisplayInfo.height,
-    fps: currentDisplayInfo.fps || 60,
+    fps: initialTargetFps,
     port: PORT,
     serverIps: localIps.map(i => i.address),
     wifiIps: localIps.map(i => i.address),
@@ -431,6 +432,10 @@ wss.on('connection', (ws, req) => {
       primary: true
     }]
   }));
+
+  // Automatically adapt hardware display refresh rate: 90 Hz for USB, 60 Hz for Wi-Fi
+  setTabletHardwareRefreshRate(initialTargetFps);
+  sendToNative({ type: 'config', fps: initialTargetFps, quality: 0.90 });
 
   // Explicitly inform client of current power state and immediately supply last frame
   ws.send(JSON.stringify({ type: 'mac_state', state: isMacAsleep ? 'sleep' : 'wake' }));
@@ -491,8 +496,16 @@ wss.on('connection', (ws, req) => {
         }
         const qMap = { low: 0.65, med: 0.80, high: 0.90, ultra: 0.95 };
         const quality = typeof msg.quality === 'string' ? (qMap[msg.quality] || 0.90) : (msg.quality || 0.90);
-        const fps = parseInt(msg.targetFps || msg.fps, 10) || 90;
-        console.log(`[Settings] Updated by client: FPS=${fps}, Quality=${quality}`);
+        let fps = parseInt(msg.targetFps || msg.fps, 10) || (ws.isUsb ? 90 : 60);
+
+        // Clamp FPS based on transport:
+        // Wi-Fi: maximum 60 FPS & 60 Hz to avoid latency and packet congestion
+        // USB: maximum 90 FPS & 90 Hz
+        if (!ws.isUsb && fps > 60) {
+          fps = 60;
+        }
+
+        console.log(`[Settings] Updated by client (${ws.isUsb ? '⚡ USB' : '📶 Wi-Fi'}): FPS=${fps}, Quality=${quality}`);
         setTabletHardwareRefreshRate(fps);
         sendToNative({ type: 'config', fps, quality });
         if (msg.displayId !== undefined && parseInt(msg.displayId, 10) > 0) {

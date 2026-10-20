@@ -332,6 +332,7 @@
   }
 
   function updateTransportUI(transport, host) {
+    const prevTransport = state.transport;
     state.transport = transport;
     if (pillTransport) {
       if (transport === 'usb') {
@@ -340,6 +341,42 @@
       } else {
         pillTransport.textContent = '📶 Wi-Fi';
         pillTransport.style.color = '#34d399';
+      }
+    }
+
+    // Adaptive Transport FPS & Refresh Rate:
+    // USB: maximum 90 FPS / 90 Hz
+    // Wi-Fi: maximum 60 FPS / 60 Hz to avoid latency and packet congestion
+    const fps90Btn = fpsSelector ? fpsSelector.querySelector('[data-fps="90"]') : null;
+    if (transport === 'wifi') {
+      if (fps90Btn) {
+        fps90Btn.style.opacity = '0.4';
+        fps90Btn.title = '90 FPS доступен только при подключении по USB';
+      }
+      if (state.targetFps > 60) {
+        state.targetFps = 60;
+        if (fpsSelector) {
+          fpsSelector.querySelectorAll('.segment-btn').forEach(b => {
+            b.classList.toggle('active', b.getAttribute('data-fps') === '60');
+          });
+        }
+        if (pillFps) pillFps.textContent = '60 FPS';
+        sendClientConfig();
+      }
+    } else if (transport === 'usb') {
+      if (fps90Btn) {
+        fps90Btn.style.opacity = '1';
+        fps90Btn.title = 'Максимальная плавность (90 Гц)';
+      }
+      if (prevTransport === 'wifi' && state.targetFps === 60) {
+        state.targetFps = 90;
+        if (fpsSelector) {
+          fpsSelector.querySelectorAll('.segment-btn').forEach(b => {
+            b.classList.toggle('active', b.getAttribute('data-fps') === '90');
+          });
+        }
+        if (pillFps) pillFps.textContent = '90 FPS';
+        sendClientConfig();
       }
     }
   }
@@ -2406,9 +2443,14 @@
     fpsSelector.addEventListener('click', (e) => {
       const btn = e.target.closest('.segment-btn');
       if (!btn) return;
+      const chosenFps = parseInt(btn.getAttribute('data-fps'), 10);
+      if (state.transport === 'wifi' && chosenFps > 60) {
+        showToast('⚠️ 90 FPS доступен только по кабелю USB (по Wi-Fi максимум 60 FPS)');
+        return;
+      }
       fpsSelector.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      state.targetFps = parseInt(btn.getAttribute('data-fps'), 10);
+      state.targetFps = chosenFps;
       sendClientConfig();
       showToast(`Частота кадров: ${state.targetFps} FPS`);
     });
